@@ -33,6 +33,7 @@ jobs:
           python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
           grep -F 'VERSION = "0.1.0-alpha.12.24"' custom_components/dummy_os_data/const.py
           grep -F '"version": "0.1.0-alpha.12.24"' custom_components/dummy_os_data/manifest.json
+          grep -F 'VERSION = "0.1.0-alpha.12.24"' tests/test_release_consistency.py
           grep -F '**Tag:** `0.1.0-alpha.12.24`' RELEASE_NOTES.md
           grep -F 'READINESS_ALGORITHM_VERSION = "model_health_readiness_v1"' custom_components/dummy_os_data/model_health.py
           grep -F 'MODEL_HEALTH_CONTRACT_VERSION = 2' custom_components/dummy_os_data/model_health.py
@@ -45,7 +46,8 @@ jobs:
         run: |
           git config user.name "Stefan"
           git config user.email "111599445+bliek79@users.noreply.github.com"
-          git add custom_components/dummy_os_data/const.py custom_components/dummy_os_data/manifest.json RELEASE_NOTES.md
+          git add custom_components/dummy_os_data/const.py custom_components/dummy_os_data/manifest.json RELEASE_NOTES.md tests/test_release_consistency.py
           git rm .github/scripts/prepare_alpha12_24.py .github/workflows/prepare-alpha12-24.yml
           git commit -m "Release alpha.12.24: Step 13 Model Health readiness"
           git push origin HEAD:release-alpha12-24-step13-health
+# retry with release-consistency version bump
