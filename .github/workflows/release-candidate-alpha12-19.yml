@@ -1,0 +1,68 @@
+name: Build Dummy OS Forecast alpha.12.19 release candidate
+
+on:
+  push:
+    branches:
+      - energy-step9-profile-contract-v1
+    paths:
+      - .github/workflows/release-candidate-alpha12-19.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      VERSION: 0.1.0-alpha.12.19
+      ZIP_NAME: Dummy_OS_Forecast_0.1.0-alpha.12.19_HA_install.zip
+      CHECKSUM_NAME: SHA256SUMS-alpha12.19.txt
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: energy-step9-profile-contract-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pytest
+      - name: Compile sources
+        run: python -m compileall -q custom_components/dummy_os_data tests
+      - name: Run full tests
+        run: python -m pytest -q
+      - name: Validate manifest
+        run: python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
+      - name: Verify exact release metadata and architecture
+        run: |
+          grep -F 'VERSION = "0.1.0-alpha.12.19"' custom_components/dummy_os_data/const.py
+          grep -F '"version": "0.1.0-alpha.12.19"' custom_components/dummy_os_data/manifest.json
+          grep -F '**Tag:** `0.1.0-alpha.12.19`' RELEASE_NOTES.md
+          grep -F 'PROFILE_CONTRACT_VERSION = 1' custom_components/dummy_os_data/const.py
+          grep -F 'PROFILE_UNCLASSIFIED = "unclassified"' custom_components/dummy_os_data/const.py
+          grep -F 'PROFILE_MIXED = "mixed"' custom_components/dummy_os_data/const.py
+          grep -F 'QUARTER_MINUTES = 15' custom_components/dummy_os_data/const.py
+          grep -F 'FORECAST_HORIZON_HOURS = 72' custom_components/dummy_os_data/const.py
+          grep -F 'RECENCY_HALF_LIFE_DAYS = 28.0' custom_components/dummy_os_data/forecast.py
+      - name: Verify alpha.12.18 source runtime gate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          src = Path('custom_components/dummy_os_data/coordinator.py').read_text()
+          start = src.index('def _async_source_changed')
+          end = src.index('@staticmethod', start)
+          block = src[start:end]
+          assert 'self._integrate_until(now)' in block
+          assert 'self._notify()' not in block
+          PY
+      - name: Build Home Assistant install ZIP
+        run: |
+          rm -f "$ZIP_NAME" "$CHECKSUM_NAME"
+          zip -r "$ZIP_NAME" custom_components/dummy_os_data -x '*/__pycache__/*' '*.pyc'
+          sha256sum "$ZIP_NAME" > "$CHECKSUM_NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dummy-os-forecast-alpha12-19-release-candidate
+          path: |
+            Dummy_OS_Forecast_0.1.0-alpha.12.19_HA_install.zip
+            SHA256SUMS-alpha12.19.txt
+            RELEASE_NOTES.md
