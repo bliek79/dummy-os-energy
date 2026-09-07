@@ -390,8 +390,8 @@ class DummyOSHomeDataCoordinator:
             return
 
         now_utc = dt_util.as_utc(now or dt_util.utcnow())
-        self._integrate_until(now_utc)
         await self._advance_through_elapsed_boundaries(now_utc)
+        self._integrate_until(now_utc)
 
         old_profile = self.profile
         at_quarter_start = (
