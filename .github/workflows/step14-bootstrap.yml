@@ -1,0 +1,46 @@
+name: Step 14 bootstrap
+
+on:
+  push:
+    branches:
+      - step14-exact-72-planner-hours
+    paths:
+      - .github/workflows/step14-bootstrap.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: step14-exact-72-planner-hours
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply Step 14 patch
+        run: python .github/scripts/step14_patch.py
+      - name: Validate
+        run: |
+          python -m pip install --upgrade pytest
+          python -m compileall -q custom_components/dummy_os_data tests
+          python -m pytest -q
+          python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
+          grep -F 'MAX_INTERNAL_FORECAST_SLOTS = FORECAST_SLOTS + 3' custom_components/dummy_os_data/forecast.py
+          grep -F 'PLANNER_HOUR_COUNT = 72' custom_components/dummy_os_data/planner_hours.py
+          grep -F 'NATIVE_PUBLIC_SLOTS = 288' custom_components/dummy_os_data/planner_hours.py
+          grep -F '"padding_used": False' custom_components/dummy_os_data/planner_hours.py
+          grep -F 'DummyOSEnergyForecastPlannerHoursSensor(coordinator)' custom_components/dummy_os_data/sensor.py
+      - name: Commit clean feature patch
+        run: |
+          git config user.name "Stefan"
+          git config user.email "111599445+bliek79@users.noreply.github.com"
+          git add custom_components/dummy_os_data tests/test_horizon_quality_sensor_contract.py tests/test_planner_hours.py tests/test_planner_hours_sensor_contract.py
+          git rm .github/scripts/step14_patch.py .github/workflows/step14-bootstrap.yml
+          git commit -m "Step 14: exact 72 complete planner hours"
+          git push origin HEAD:step14-exact-72-planner-hours
