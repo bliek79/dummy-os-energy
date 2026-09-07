@@ -27,13 +27,18 @@ def test_fast_home_power_updates_do_not_notify_forecast_entities() -> None:
 
 
 def test_quarter_boundary_remains_the_energy_forecast_refresh_point() -> None:
-    """Completed quarters still publish the refreshed Energy Forecast state."""
-    method = _method_source("_async_quarter_boundary")
-    assert "_finalize_quarter" in method
-    assert "_notify" in method
+    """Completed quarters still publish refreshed Energy Forecast state through the shared boundary helper."""
+    boundary = _method_source("_async_quarter_boundary")
+    helper = _method_source("_advance_through_elapsed_boundaries")
+    assert "_advance_through_elapsed_boundaries" in boundary
+    assert "_notify" in boundary
+    assert "_finalize_quarter" in helper
+    assert "_start_new_quarter" in helper
+    assert "_capture_forecast_for_slot_start" in helper
 
 
 def test_profile_change_still_refreshes_energy_forecast_state() -> None:
     """A deliberate profile change remains a relevant forecast refresh trigger."""
     method = _method_source("async_set_profile")
     assert "_notify" in method
+    assert "_advance_through_elapsed_boundaries" in method
