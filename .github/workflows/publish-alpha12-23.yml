@@ -1,0 +1,70 @@
+name: Publish Dummy OS Forecast alpha.12.23
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-alpha12-23.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      VERSION: 0.1.0-alpha.12.23
+      RELEASE_COMMIT: 3c73585c32c91d360549324176732eccb4ff05f3
+      ZIP_NAME: Dummy_OS_Forecast_0.1.0-alpha.12.23_HA_install.zip
+      CHECKSUM_NAME: SHA256SUMS-alpha12.23.txt
+      RELEASE_TITLE: Dummy OS Forecast 0.1.0-alpha.12.23 - Step 12 Forecast Quality by Horizon Observer
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 3c73585c32c91d360549324176732eccb4ff05f3
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pytest
+      - name: Verify pinned release commit
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+      - name: Compile and test
+        run: |
+          python -m compileall -q custom_components/dummy_os_data tests
+          python -m pytest -q
+          python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
+      - name: Verify Step 12 and production invariants
+        run: |
+          grep -F 'VERSION = "0.1.0-alpha.12.23"' custom_components/dummy_os_data/const.py
+          grep -F '"version": "0.1.0-alpha.12.23"' custom_components/dummy_os_data/manifest.json
+          grep -F '**Tag:** `0.1.0-alpha.12.23`' RELEASE_NOTES.md
+          grep -F 'ALGORITHM_VERSION = "forecast_horizon_quality_observer_v1"' custom_components/dummy_os_data/horizon_quality.py
+          grep -F '("h72_edge", 287, 4305, "last_native_slot_ends_plus_72h")' custom_components/dummy_os_data/horizon_quality.py
+          grep -F '"observer_only": True' custom_components/dummy_os_data/horizon_quality.py
+          grep -F '"forecast_influence_enabled": False' custom_components/dummy_os_data/horizon_quality.py
+          grep -F 'QUARTER_MINUTES = 15' custom_components/dummy_os_data/const.py
+          grep -F 'FORECAST_HORIZON_HOURS = 72' custom_components/dummy_os_data/const.py
+          grep -F 'RECENCY_HALF_LIFE_DAYS = 28.0' custom_components/dummy_os_data/forecast.py
+          test "$(git diff 0.1.0-alpha.12.22 "$RELEASE_COMMIT" -- custom_components/dummy_os_data/forecast.py | wc -l)" -eq 0
+      - name: Build package
+        run: |
+          zip -r "$ZIP_NAME" custom_components/dummy_os_data -x '*/__pycache__/*' '*.pyc'
+          sha256sum "$ZIP_NAME" > "$CHECKSUM_NAME"
+          cat "$CHECKSUM_NAME"
+      - name: Create tag and pre-release
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then exit 1; fi
+          git tag "$VERSION" "$RELEASE_COMMIT"
+          git push origin "$VERSION"
+          gh release create "$VERSION" "$ZIP_NAME" "$CHECKSUM_NAME" --target "$RELEASE_COMMIT" --title "$RELEASE_TITLE" --notes-file RELEASE_NOTES.md --prerelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dummy-os-forecast-alpha12-23-published-assets
+          path: |
+            Dummy_OS_Forecast_0.1.0-alpha.12.23_HA_install.zip
+            SHA256SUMS-alpha12.23.txt
+            RELEASE_NOTES.md
