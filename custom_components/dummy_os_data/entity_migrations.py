@@ -50,6 +50,7 @@ ENERGY_GENERATED_ENTITY_ID_ALIASES: dict[str, str] = {
     "do_energy_meaningful_confidence": "sensor.dummy_os_forecast_do_energy_meaningful_confidence",
     "do_energy_forecast_quality_by_horizon": "sensor.dummy_os_forecast_do_energy_forecast_quality_by_horizon",
     "do_energy_forecast_planner_hours": "sensor.dummy_os_forecast_do_energy_forecast_planner_hours",
+    "do_energy_forecast_planner_contract": "sensor.dummy_os_forecast_do_energy_forecast_planner_contract",
 }
 
 OBSOLETE_HOME_INPUT_ENTITY_ALIASES: dict[str, set[str]] = {
