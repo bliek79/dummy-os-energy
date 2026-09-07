@@ -36,6 +36,7 @@ from .recency_weighting import calculate_recency_weighting
 from .forecast import HomeBaselineForecast
 from .horizon_quality import calculate_horizon_quality
 from .model_health import calculate_model_health_readiness
+from .forecast_planner_contract import build_forecast_planner_contract
 from .planner_hours import (
     aggregate_planner_hours,
     required_generated_slot_count,
@@ -70,6 +71,7 @@ async def async_setup_entry(
             DummyOSHomeForecastSensor(coordinator),
             DummyOSHomeForecastTimelineSensor(coordinator),
             DummyOSEnergyForecastPlannerHoursSensor(coordinator),
+            DummyOSEnergyForecastPlannerContractSensor(coordinator),
             DummyOSHomeForecastNextQuarterSensor(coordinator),
             DummyOSHomeForecastCoverageSensor(coordinator),
             DummyOSHomeForecastConfidenceSensor(coordinator),
@@ -330,6 +332,32 @@ class DummyOSHomeForecastTimelineSensor(DummyOSBaseSensor):
         }
 
 
+def _build_planner_hours_result(
+    coordinator: DummyOSHomeDataCoordinator,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    reference = now or dt_util.utcnow()
+    model = HomeBaselineForecast(coordinator.records)
+    public_slots = model.build(coordinator.profile, now=reference)
+    if not public_slots:
+        return aggregate_planner_hours(
+            [], profile=coordinator.profile, localize=dt_util.as_local
+        )
+    generated_count = required_generated_slot_count(
+        public_slots[0].start, dt_util.as_local
+    )
+    extended_slots = model.build(
+        coordinator.profile, now=reference, slot_count=generated_count
+    )
+    result = aggregate_planner_hours(
+        extended_slots, profile=coordinator.profile, localize=dt_util.as_local
+    )
+    if coordinator.profile not in PROFILE_LEARNING_OPTIONS:
+        result["status"] = "profile_unclassified"
+    return result
+
+
 class DummyOSEnergyForecastPlannerHoursSensor(DummyOSBaseSensor):
     """Step 14 exact 72 complete planner-hour forecast interface."""
 
@@ -340,29 +368,40 @@ class DummyOSEnergyForecastPlannerHoursSensor(DummyOSBaseSensor):
     _unrecorded_attributes = frozenset({"hours"})
 
     def _result(self) -> dict[str, Any]:
-        now = dt_util.utcnow()
-        model = HomeBaselineForecast(self.coordinator.records)
-        public_slots = model.build(self.coordinator.profile, now=now)
-        if not public_slots:
-            return aggregate_planner_hours(
-                [], profile=self.coordinator.profile, localize=dt_util.as_local
-            )
-        generated_count = required_generated_slot_count(
-            public_slots[0].start, dt_util.as_local
-        )
-        extended_slots = model.build(
-            self.coordinator.profile, now=now, slot_count=generated_count
-        )
-        result = aggregate_planner_hours(
-            extended_slots, profile=self.coordinator.profile, localize=dt_util.as_local
-        )
-        if not self._profile_learnable:
-            result["status"] = "profile_unclassified"
-        return result
+        return _build_planner_hours_result(self.coordinator)
 
     @property
     def native_value(self) -> int:
         return int(self._result()["valid_hour_count"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self._result())
+
+
+class DummyOSEnergyForecastPlannerContractSensor(DummyOSBaseSensor):
+    """Stable Step 15 Forecast -> Planner contract."""
+
+    _attr_name = "DO Energy Forecast Planner Contract"
+    _attr_unique_id = "do_energy_forecast_planner_contract"
+    _attr_suggested_object_id = "do_energy_forecast_planner_contract"
+    _attr_icon = "mdi:connection"
+    _unrecorded_attributes = frozenset({"hours"})
+
+    def _result(self) -> dict[str, Any]:
+        now = dt_util.utcnow()
+        planner_hours = _build_planner_hours_result(self.coordinator, now=now)
+        model = HomeBaselineForecast(self.coordinator.records)
+        slots = model.build(self.coordinator.profile, now=now)
+        model_health = _build_model_health_result(self.coordinator, slots)
+        return build_forecast_planner_contract(
+            planner_hours=planner_hours,
+            model_health=model_health,
+        )
+
+    @property
+    def native_value(self) -> str:
+        return str(self._result()["status"])
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -451,6 +490,44 @@ class DummyOSHomeForecastConfidenceSensor(DummyOSBaseSensor):
         }
 
 
+def _build_model_health_result(
+    coordinator: DummyOSHomeDataCoordinator,
+    slots: list[Any],
+) -> dict[str, Any]:
+    supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
+    coverage = round(supported / len(slots) * 100, 1) if slots else None
+    confidence = HomeBaselineForecast.average_confidence(slots)
+    metrics = coordinator.evaluation_metrics(coordinator.profile)
+    horizon_quality = calculate_horizon_quality(
+        coordinator.horizon_daily_stats,
+        coordinator.profile,
+    )
+    day_type_daypart_quality = calculate_day_type_daypart_quality(
+        coordinator.evaluations,
+        coordinator.records,
+        coordinator.profile,
+        dt_util.as_local,
+    )
+    hour_quality = calculate_hour_quality(
+        coordinator.evaluations,
+        coordinator.records,
+        coordinator.profile,
+        dt_util.as_local,
+    )
+    return calculate_model_health_readiness(
+        records=coordinator.records,
+        profile=coordinator.profile,
+        source_available=coordinator.source_available,
+        forecast_coverage_percent=coverage,
+        average_confidence_percent=confidence,
+        evaluation_metrics=metrics,
+        horizon_quality=horizon_quality,
+        day_type_daypart_quality=day_type_daypart_quality,
+        hour_quality=hour_quality,
+        localize=dt_util.as_local,
+    )
+
+
 class DummyOSHomeForecastModelHealthSensor(DummyOSBaseSensor):
     _attr_name = "DO Energy Forecast Model Health"
     _attr_unique_id = "do_energy_forecast_model_health"
@@ -458,39 +535,7 @@ class DummyOSHomeForecastModelHealthSensor(DummyOSBaseSensor):
     _attr_icon = "mdi:heart-pulse"
 
     def _readiness(self) -> dict[str, Any]:
-        slots = self._forecast()
-        supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
-        coverage = round(supported / len(slots) * 100, 1) if slots else None
-        confidence = HomeBaselineForecast.average_confidence(slots)
-        metrics = self.coordinator.evaluation_metrics(self.coordinator.profile)
-        horizon_quality = calculate_horizon_quality(
-            self.coordinator.horizon_daily_stats,
-            self.coordinator.profile,
-        )
-        day_type_daypart_quality = calculate_day_type_daypart_quality(
-            self.coordinator.evaluations,
-            self.coordinator.records,
-            self.coordinator.profile,
-            dt_util.as_local,
-        )
-        hour_quality = calculate_hour_quality(
-            self.coordinator.evaluations,
-            self.coordinator.records,
-            self.coordinator.profile,
-            dt_util.as_local,
-        )
-        return calculate_model_health_readiness(
-            records=self.coordinator.records,
-            profile=self.coordinator.profile,
-            source_available=self.coordinator.source_available,
-            forecast_coverage_percent=coverage,
-            average_confidence_percent=confidence,
-            evaluation_metrics=metrics,
-            horizon_quality=horizon_quality,
-            day_type_daypart_quality=day_type_daypart_quality,
-            hour_quality=hour_quality,
-            localize=dt_util.as_local,
-        )
+        return _build_model_health_result(self.coordinator, self._forecast())
 
     @property
     def native_value(self) -> str:
