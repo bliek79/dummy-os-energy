@@ -21,6 +21,7 @@ def test_step12_store_and_capture_are_observer_only_extensions():
     assert '"horizon_daily_stats": self.horizon_daily_stats' in COORDINATOR
 
 def test_production_forecast_contract_remains_native_288():
-    assert 'for offset in range(FORECAST_SLOTS):' in FORECAST
+    assert 'slot_count: int = FORECAST_SLOTS' in FORECAST
+    assert 'for offset in range(slot_count):' in FORECAST
     assert 'RECENCY_HALF_LIFE_DAYS = 28.0' in FORECAST
     assert 'horizon_quality' not in FORECAST
