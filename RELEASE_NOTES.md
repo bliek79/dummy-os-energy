@@ -1,9 +1,61 @@
 # GitHub Release
 
+**Tag:** `0.1.0-alpha.12.20`  
+**Release title:** Dummy OS Forecast 0.1.0-alpha.12.20 - Step 10D Fallback Hierarchy Observer
+
+## Dummy OS Forecast 0.1.0-alpha.12.20
+
+Deze pre-release implementeert Stap 10D van de Energy Forecast-route als strikt observer-only fallback-hiërarchie. De productieforecast blijft ongewijzigd op `historical_baseline` modelversie `0.4`, met dezelfde 28-daagse recency weighting en dezelfde native architectuur van 15 minuten / 72 uur / 288 slots.
+
+### Nieuw
+- Nieuwe observer `sensor.do_energy_fallback_hierarchy` met canonical unique_id en suggested_object_id `do_energy_fallback_hierarchy` en runtime/friendly name `DO Energy Fallback Hierarchy`.
+- Observer-algoritme `fallback_hierarchy_observer_v1` voert counterfactual replay uit op bestaande persistente Energy records en forward-looking evaluations.
+- De kandidaat-hiërarchie is: `weekday_quarter -> day_type_quarter -> nearby_quarter_day_type -> same_hour_profile -> daypart_profile -> profile_global_median`.
+- `nearby_quarter_day_type` gebruikt eerst +/-15 minuten en alleen indien nodig +/-30 minuten, zonder over de lokale daggrens te wrappen.
+- `same_hour_profile` gebruikt hetzelfde lokale klokuur binnen exact hetzelfde profiel.
+- `daypart_profile` gebruikt de vaste lokale dagdelen night 00:00-06:00, morning 06:00-12:00, afternoon 12:00-18:00 en evening 18:00-24:00.
+- `profile_global_median` gebruikt als laatste vangnet een robuuste 28-daags recency-gewogen mediaan binnen exact hetzelfde profiel.
+
+### Bewijs- en veiligheidscontract
+- De officiële productiecontrole blijft `weekday_quarter -> day_type_quarter -> quarter_of_day -> profile_mean`.
+- Historische replay gebruikt uitsluitend kwartieren die volledig waren afgerond op of vóór `forecast_captured_at`; toekomstige actuals worden niet gebruikt.
+- Normal en Away blijven volledig gescheiden. `unclassified` wordt in de publieke observer veilig `inactive_profile` en leent nooit historie van een leerbaar profiel.
+- Missing, unknown en unavailable worden nooit naar 0 kWh geconverteerd.
+- Control-replay mismatch, te late capture, onvoldoende dekking en ongeldige tijdcontracten worden expliciet uitgesloten.
+- De observer publiceert paired control/candidate metrics, fallback-activaties, per-level metrics, day-type x daypart regressiecontrole en early/late stabiliteit.
+- `promotion_ready` blijft altijd `false` in deze release en `live_shadow_required` blijft `true`.
+- Een positieve counterfactual replay activeert dus nooit automatisch productiegedrag.
+
+### Ongewijzigd
+- Native architectuur: exact 15 minuten / 72 uur / 288 slots.
+- Productieforecast: `historical_baseline` modelversie `0.4`.
+- Productie-recency: 28 dagen half-life.
+- Forecast confidence en Model Health zijn niet gewijzigd.
+- Peak Learning, Time Windows en Recency Weighting blijven observer-only.
+- Weather, Solar, Prices en Degree Days zijn functioneel niet gewijzigd.
+- Dummy OS EMS en fysieke batterijbesturing zijn niet gewijzigd.
+- Package 41 blijft voorlopig de actieve woningforecast voor Dummy OS EMS totdat een later Forecast -> Planner-contract afzonderlijk is ontworpen en live gevalideerd.
+
+### Technische validatie vóór publicatie
+- volledige Python compilecontrole;
+- volledige regressietestset groen;
+- manifest JSON geldig;
+- Step 9 profielcontract- en alpha.12.18 runtimegates blijven groen;
+- Step 10D fallbackhiërarchie- en identitytests groen;
+- installatie-ZIP en SHA256-checksum gebouwd uit exact dezelfde releasecommit.
+
+### Live validatie na installatie
+- Bevestigen dat `sensor.do_energy_fallback_hierarchy` exact onder de canonical entity-id verschijnt, zonder `_2`-variant.
+- Bevestigen dat state, profile, observer_only, forecast_influence_enabled, control_hierarchy, candidate_hierarchy, replay_candidate_supported, promotion_ready, live_shadow_required en blockers correct worden gepubliceerd.
+- Bevestigen dat de bestaande productieforecast, confidence, Model Health en Package-41/EMS-route door deze observer niet veranderen.
+- De observer vervolgens voldoende forward-looking/live shadow data laten opbouwen voor Stap 10E; productiepromotie blijft een afzonderlijk later besluit.
+
+---
+
+## Historische release - Dummy OS Forecast 0.1.0-alpha.12.19
+
 **Tag:** `0.1.0-alpha.12.19`  
 **Release title:** Dummy OS Forecast 0.1.0-alpha.12.19 - Energy Profile Contract v1
-
-## Dummy OS Forecast 0.1.0-alpha.12.19
 
 Deze pre-release implementeert Stap 9 van de Energy Forecast-route: een expliciet en veilig profielcontract voor `normal`, `away` en `unclassified`, zonder het productieforecastmodel of de native 15-minuten / 72-uur / 288-slot architectuur te wijzigen.
 
@@ -41,20 +93,3 @@ Deze pre-release implementeert Stap 9 van de Energy Forecast-route: een explicie
 - Weather, Solar, Prices en Degree Days zijn functioneel niet gewijzigd.
 - Dummy OS EMS en fysieke batterijbesturing zijn niet gewijzigd.
 - EMS blijft voorlopig zijn bestaande externe Home Forecast gebruiken; migratie naar Dummy OS Forecast is geen onderdeel van deze release.
-
-### Technische validatie
-Releasekandidaat vereist vóór publicatie:
-- volledige Python compilecontrole;
-- volledige regressietestset groen;
-- manifest JSON geldig;
-- Step 9 profielcontractgate groen;
-- alpha.12.18 snelle source-runtimegate groen;
-- installatie-ZIP en SHA256-checksum gebouwd uit exact dezelfde releasecommit.
-
-### Live validatie na installatie
-- Bevestigen dat bestaande `normal`-historie en evaluaties behouden blijven na upgrade vanaf alpha.12.18.
-- Minimaal één volledig Normal-kwartier controleren op `measurement_valid: true`, `learning_valid: true` en normale forward evaluation.
-- Een gecontroleerde profielwisseling testen en bevestigen dat het overgangskwartier `mixed` wordt, gemeten energie behoudt en niet wordt geleerd.
-- `unclassified` kort testen: 288 slots blijven aanwezig, maar zonder ingevulde forecastwaarden en zonder nieuwe observer-leerdata.
-- `normal` herstellen en bevestigen dat de bestaande 72-uursforecast opnieuw 288 gevulde kwartierslots levert.
-- Home Assistant-responsiviteit blijven controleren om te bevestigen dat de alpha.12.18 stabiliteitswinst behouden blijft.
