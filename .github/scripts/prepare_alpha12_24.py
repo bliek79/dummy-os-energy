@@ -12,6 +12,11 @@ data = json.loads(manifest.read_text())
 data["version"] = version
 manifest.write_text(json.dumps(data, indent=2) + "\n")
 
+consistency = Path("tests/test_release_consistency.py")
+consistency_text = consistency.read_text()
+consistency_text = consistency_text.replace('VERSION = "0.1.0-alpha.12.23"', f'VERSION = "{version}"', 1)
+consistency.write_text(consistency_text)
+
 notes = Path("RELEASE_NOTES.md")
 old = notes.read_text()
 head = '''# GitHub Release
