@@ -123,6 +123,7 @@ _ENTITY_ID_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("sensor", "do_energy_peak_learning", "sensor.do_energy_peak_learning"),
     ("sensor", "do_energy_time_windows", "sensor.do_energy_time_windows"),
     ("sensor", "do_energy_recency_weighting", "sensor.do_energy_recency_weighting"),
+    ("sensor", "do_energy_fallback_hierarchy", "sensor.do_energy_fallback_hierarchy"),
     ("sensor", "do_degree_days_status", "sensor.do_degree_days_status"),
     ("sensor", "do_degree_days_history_days", "sensor.do_degree_days_history_days"),
     ("sensor", "do_degree_days_temperature_daily", "sensor.do_degree_days_temperature_daily"),
