@@ -27,6 +27,7 @@ from .const import (
 )
 from .coordinator import DummyOSHomeDataCoordinator
 from .fallback_hierarchy import calculate_fallback_hierarchy
+from .meaningful_confidence import calculate_meaningful_confidence
 
 POSITIVE_SOURCE_DEFINITIONS: tuple[tuple[str, str, str, str], ...] = (
     (
@@ -406,6 +407,61 @@ class DummyOSEnergyFallbackHierarchySensor(SensorEntity):
         return dict(self._result())
 
 
+class DummyOSEnergyMeaningfulConfidenceSensor(SensorEntity):
+    """Observer-only Step 11 meaningful-confidence diagnostics."""
+
+    _attr_should_poll = False
+    _attr_has_entity_name = False
+    _attr_name = "DO Energy Meaningful Confidence"
+    _attr_unique_id = "do_energy_meaningful_confidence"
+    _attr_suggested_object_id = "do_energy_meaningful_confidence"
+    _attr_icon = "mdi:gauge"
+    _unrecorded_attributes = frozenset({"production_buckets", "candidate_buckets"})
+
+    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
+        self.coordinator = coordinator
+        self._remove_listener = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, "main")},
+            name=NAME,
+            manufacturer="Dummy OS",
+            model="Forecast Platform",
+            sw_version=VERSION,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._remove_listener = self.coordinator.async_add_listener(self._handle_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._remove_listener is not None:
+            self._remove_listener()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    def _result(self) -> dict[str, Any]:
+        return calculate_meaningful_confidence(
+            self.coordinator.records,
+            self.coordinator.evaluations,
+            self.coordinator.profile,
+            dt_util.as_local,
+        )
+
+    @property
+    def native_value(self) -> str:
+        return str(self._result()["status"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self._result())
+
+
 def build_home_input_sensors(
     coordinator: DummyOSHomeDataCoordinator,
 ) -> list[SensorEntity]:
@@ -427,4 +483,5 @@ def build_home_input_sensors(
     )
     entities.append(DummyOSSourceHomePowerSensor(coordinator))
     entities.append(DummyOSEnergyFallbackHierarchySensor(coordinator))
+    entities.append(DummyOSEnergyMeaningfulConfidenceSensor(coordinator))
     return entities
