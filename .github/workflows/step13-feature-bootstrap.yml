@@ -40,3 +40,4 @@ jobs:
           git rm .github/scripts/step13_patch.py .github/workflows/step13-feature-bootstrap.yml
           git commit -m "Step 13: objective Model Health readiness"
           git push origin HEAD:step13-model-health-readiness
+# retry after explicit Step 9 profile guard restoration
