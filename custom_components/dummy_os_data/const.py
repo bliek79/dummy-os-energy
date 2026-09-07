@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "dummy_os_data"
 NAME = "Dummy OS Forecast"
-VERSION = "0.1.0-alpha.12.20"
+VERSION = "0.1.0-alpha.12.21"
 
 # Legacy Energy Forecast source key retained for config-entry compatibility only.
 # Energy Forecast production always consumes the canonical Source Home Power entity.
@@ -34,7 +34,7 @@ DATA_POWER_SOURCE_KEYS = [
 
 # Temporary alpha.11.5 option keys retained only to prefill migration safely.
 LEGACY_CONF_GRID_IMPORT_POWER_ENTITY = "grid_import_power_entity"
-LEGACY_CONF_GRID_EXPORT_POWER_ENTITY = "grid_export_power_entity"
+LEGACY_CONF_GRID_EXPORT_POWER_ENTITY = "export_power_entity"
 
 CONF_TARIFF_PROFILE_ID = "tariff_profile_id"
 CONF_TARIFF_SUPPLIER = "tariff_supplier"
