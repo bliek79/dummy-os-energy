@@ -31,6 +31,7 @@ from .const import (
 from .energy_store import normalize_energy_store_payload
 from .evaluation import calculate_metrics
 from .forecast import ForecastSlot, HomeBaselineForecast
+from .horizon_quality import HORIZON_PROBES
 from .weather import DummyOSWeatherCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,6 +70,8 @@ class DummyOSHomeDataCoordinator:
         self.records: list[dict[str, Any]] = []
         self.forecast_snapshots: dict[str, dict[str, Any]] = {}
         self.evaluations: list[dict[str, Any]] = []
+        self.horizon_pending_probes: dict[str, dict[str, Any]] = {}
+        self.horizon_daily_stats: dict[str, dict[str, Any]] = {}
         self.last_quarter: QuarterResult | None = None
         self.listeners: list[callback] = []
         self.weather = DummyOSWeatherCoordinator(hass)
@@ -108,9 +111,12 @@ class DummyOSHomeDataCoordinator:
         self.records = stored.get("records", [])
         self.forecast_snapshots = stored.get("forecast_snapshots", {})
         self.evaluations = stored.get("evaluations", [])
+        self.horizon_pending_probes = stored.get("horizon_pending_probes", {})
+        self.horizon_daily_stats = stored.get("horizon_daily_stats", {})
         self._prune_records()
         self._prune_snapshots()
         self._prune_evaluations()
+        self._prune_horizon_data()
 
         now = dt_util.utcnow()
         self._start_new_quarter(now)
@@ -203,6 +209,10 @@ class DummyOSHomeDataCoordinator:
                     self._quarter_start,
                     captured_at=boundary_utc,
                 )
+                self._capture_horizon_probes(
+                    self._quarter_start,
+                    captured_at=boundary_utc,
+                )
 
     def _start_new_quarter(self, now_utc: datetime) -> None:
         local = dt_util.as_local(now_utc)
@@ -281,8 +291,10 @@ class DummyOSHomeDataCoordinator:
             }
         )
         self._evaluate_completed_quarter(result)
+        self._evaluate_horizon_completed_quarter(result)
         self._prune_records()
         self._prune_evaluations()
+        self._prune_horizon_data()
 
     def _capture_next_quarter_forecast(self, now_utc: datetime) -> None:
         """Capture the next complete quarter, useful during setup/profile changes."""
@@ -309,6 +321,137 @@ class DummyOSHomeDataCoordinator:
             )
             return
         self._store_forecast_snapshot(slot, captured_at=captured_at)
+
+    def _capture_horizon_probes(self, slot_start_utc: datetime, captured_at: datetime) -> None:
+        """Freeze compact Step 12 probes from the existing 288-slot production forecast."""
+        if self.profile not in PROFILE_LEARNING_OPTIONS:
+            return
+        target_start = dt_util.as_utc(slot_start_utc)
+        just_before = target_start - timedelta(microseconds=1)
+        slots = HomeBaselineForecast(self.records).build(self.profile, now=just_before)
+        if len(slots) != 288 or slots[0].start != target_start:
+            _LOGGER.warning("Skipping Step 12 horizon capture: invalid native forecast shape")
+            return
+        captured_iso = dt_util.as_utc(captured_at).isoformat()
+        for _key, offset, horizon_minutes, semantics in HORIZON_PROBES:
+            slot = slots[offset]
+            if slot.energy_kwh is None:
+                continue
+            probe_key = f"{slot.start.isoformat()}|{horizon_minutes}|{self.profile}"
+            self.horizon_pending_probes[probe_key] = {
+                "target_start": slot.start.isoformat(),
+                "target_end": slot.end.isoformat(),
+                "captured_at": captured_iso,
+                "profile": self.profile,
+                "horizon_minutes": horizon_minutes,
+                "target_semantics": semantics,
+                "forecast_kwh": slot.energy_kwh,
+                "source": slot.source,
+                "sample_count": slot.sample_count,
+                "confidence": slot.confidence,
+                "model": "historical_baseline",
+                "model_version": "0.4",
+            }
+
+    def _horizon_bucket(self, probe: dict[str, Any], result: QuarterResult) -> dict[str, Any]:
+        local_date = dt_util.as_local(result.start).date().isoformat()
+        horizon_minutes = int(probe["horizon_minutes"])
+        profile = str(probe["profile"])
+        key = f"{profile}|{local_date}|{horizon_minutes}"
+        return self.horizon_daily_stats.setdefault(
+            key,
+            {
+                "profile": profile,
+                "local_date": local_date,
+                "horizon_minutes": horizon_minutes,
+                "sample_count": 0,
+                "sum_abs_error_kwh": 0.0,
+                "sum_error_kwh": 0.0,
+                "sum_actual_kwh": 0.0,
+                "sum_forecast_kwh": 0.0,
+                "sum_confidence": 0.0,
+                "source_counts": {},
+                "excluded_record_counts": {},
+            },
+        )
+
+    @staticmethod
+    def _increment_horizon_exclusion(bucket: dict[str, Any], reason: str) -> None:
+        excluded = bucket.setdefault("excluded_record_counts", {})
+        excluded[reason] = int(excluded.get(reason, 0) or 0) + 1
+
+    def _evaluate_horizon_completed_quarter(self, result: QuarterResult) -> None:
+        """Evaluate all Step 12 probes whose target is this completed quarter."""
+        target = result.start.isoformat()
+        matches = [key for key, probe in self.horizon_pending_probes.items() if probe.get("target_start") == target]
+        for key in matches:
+            probe = self.horizon_pending_probes.pop(key)
+            try:
+                bucket = self._horizon_bucket(probe, result)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if result.profile in {PROFILE_UNCLASSIFIED, PROFILE_MIXED}:
+                self._increment_horizon_exclusion(bucket, "unclassified_or_mixed")
+                continue
+            if result.profile != probe.get("profile"):
+                self._increment_horizon_exclusion(bucket, "profile_mismatch")
+                continue
+            if not result.measurement_valid:
+                self._increment_horizon_exclusion(bucket, "insufficient_coverage")
+                continue
+            if not result.learning_valid or result.energy_kwh is None:
+                self._increment_horizon_exclusion(bucket, "invalid_actual")
+                continue
+            try:
+                forecast_kwh = float(probe["forecast_kwh"])
+                confidence = float(probe.get("confidence", 0.0))
+                captured_at = datetime.fromisoformat(str(probe["captured_at"]))
+            except (KeyError, TypeError, ValueError):
+                self._increment_horizon_exclusion(bucket, "malformed_snapshot")
+                continue
+            if captured_at.tzinfo is None:
+                self._increment_horizon_exclusion(bucket, "malformed_snapshot")
+                continue
+            if dt_util.as_utc(captured_at) > dt_util.as_utc(result.start):
+                self._increment_horizon_exclusion(bucket, "late_capture")
+                continue
+            error = forecast_kwh - result.energy_kwh
+            bucket["sample_count"] = int(bucket.get("sample_count", 0) or 0) + 1
+            bucket["sum_abs_error_kwh"] = float(bucket.get("sum_abs_error_kwh", 0.0) or 0.0) + abs(error)
+            bucket["sum_error_kwh"] = float(bucket.get("sum_error_kwh", 0.0) or 0.0) + error
+            bucket["sum_actual_kwh"] = float(bucket.get("sum_actual_kwh", 0.0) or 0.0) + result.energy_kwh
+            bucket["sum_forecast_kwh"] = float(bucket.get("sum_forecast_kwh", 0.0) or 0.0) + forecast_kwh
+            bucket["sum_confidence"] = float(bucket.get("sum_confidence", 0.0) or 0.0) + confidence
+            source = str(probe.get("source") or "unknown")
+            sources = bucket.setdefault("source_counts", {})
+            sources[source] = int(sources.get(source, 0) or 0) + 1
+
+    def _prune_horizon_data(self) -> None:
+        """Keep pending probes briefly and daily evidence for the normal 400-day window."""
+        now = dt_util.utcnow()
+        pending_cutoff = now - timedelta(days=4)
+        kept_pending: dict[str, dict[str, Any]] = {}
+        for key, probe in self.horizon_pending_probes.items():
+            try:
+                target_end = datetime.fromisoformat(str(probe["target_end"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if target_end.tzinfo is None:
+                continue
+            if dt_util.as_utc(target_end) >= pending_cutoff:
+                kept_pending[key] = probe
+        self.horizon_pending_probes = kept_pending
+
+        date_cutoff = dt_util.as_local(now - timedelta(days=MAX_HISTORY_DAYS)).date()
+        kept_stats: dict[str, dict[str, Any]] = {}
+        for key, bucket in self.horizon_daily_stats.items():
+            try:
+                local_date = datetime.fromisoformat(str(bucket["local_date"])).date()
+            except (KeyError, TypeError, ValueError):
+                continue
+            if local_date >= date_cutoff:
+                kept_stats[key] = bucket
+        self.horizon_daily_stats = kept_stats
 
     def _store_forecast_snapshot(
         self,
@@ -425,6 +568,8 @@ class DummyOSHomeDataCoordinator:
                 "records": self.records,
                 "forecast_snapshots": self.forecast_snapshots,
                 "evaluations": self.evaluations,
+                "horizon_pending_probes": self.horizon_pending_probes,
+                "horizon_daily_stats": self.horizon_daily_stats,
             }
         )
 
