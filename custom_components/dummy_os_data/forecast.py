@@ -10,7 +10,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from .const import FORECAST_SLOTS, PROFILE_OPTIONS, QUARTER_MINUTES
+from .const import FORECAST_SLOTS, PROFILE_LEARNING_OPTIONS, QUARTER_MINUTES
 
 RECENCY_HALF_LIFE_DAYS = 28.0
 
@@ -86,6 +86,9 @@ class HomeBaselineForecast:
         quarter: dict[int, list[HistoricalSample]] = defaultdict(list)
         all_values: list[HistoricalSample] = []
 
+        if profile not in PROFILE_LEARNING_OPTIONS:
+            return exact, day_type, quarter, all_values
+
         for record in self.records:
             if not record.get("valid") or record.get("profile") != profile:
                 continue
@@ -135,11 +138,19 @@ class HomeBaselineForecast:
         }
 
     def all_profile_statistics(self) -> dict[str, dict[str, Any]]:
-        """Return statistics for all supported profiles."""
-        return {profile: self.profile_statistics(profile) for profile in PROFILE_OPTIONS}
+        """Return statistics for the learnable profiles only."""
+        return {
+            profile: self.profile_statistics(profile)
+            for profile in PROFILE_LEARNING_OPTIONS
+        }
 
     def build(self, profile: str, now: datetime | None = None) -> list[ForecastSlot]:
-        """Build 288 native 15-minute forecast slots from historical data."""
+        """Build 288 native 15-minute forecast slots from historical data.
+
+        Non-learnable profile contexts deliberately produce the same 288-slot
+        time contract with unavailable values. This preserves planner-facing
+        shape without silently borrowing Normal or Away history.
+        """
         exact, day_type, quarter, all_values = self._history(profile)
         now_utc = dt_util.as_utc(now or dt_util.utcnow())
         now_local = dt_util.as_local(now_utc)
@@ -182,7 +193,7 @@ class HomeBaselineForecast:
             else:
                 value = None
                 samples = 0
-                source = "unavailable"
+                source = "profile_unclassified" if profile not in PROFILE_LEARNING_OPTIONS else "unavailable"
                 confidence = 0.0
 
             result.append(

@@ -13,10 +13,24 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, FORECAST_SLOTS, NAME, QUARTER_MINUTES, VERSION
+from .const import (
+    DOMAIN,
+    FORECAST_SLOTS,
+    NAME,
+    PROFILE_LEARNING_OPTIONS,
+    PROFILE_UNCLASSIFIED,
+    QUARTER_MINUTES,
+    VERSION,
+)
 from .coordinator import DummyOSHomeDataCoordinator
 from .degree_days_sensor import build_degree_days_sensors
-from .evaluation import calculate_day_type_daypart_quality, calculate_day_type_quality, calculate_daypart_quality, calculate_hour_quality, calculate_peak_learning
+from .evaluation import (
+    calculate_day_type_daypart_quality,
+    calculate_day_type_quality,
+    calculate_daypart_quality,
+    calculate_hour_quality,
+    calculate_peak_learning,
+)
 from .time_windows import calculate_time_windows
 from .recency_weighting import calculate_recency_weighting
 from .forecast import HomeBaselineForecast
@@ -119,6 +133,10 @@ class DummyOSBaseSensor(SensorEntity):
     def _handle_update(self) -> None:
         self.async_write_ha_state()
 
+    @property
+    def _profile_learnable(self) -> bool:
+        return self.coordinator.profile in PROFILE_LEARNING_OPTIONS
+
     def _forecast(self):
         local = dt_util.as_local(dt_util.utcnow())
         quarter_key = (local.date().isoformat(), local.hour, local.minute // QUARTER_MINUTES)
@@ -140,14 +158,30 @@ class DummyOSActualQuarterSensor(DummyOSBaseSensor):
     @property
     def native_value(self) -> float | None:
         result = self.coordinator.last_quarter
-        return result.energy_kwh if result and result.valid else None
+        return result.energy_kwh if result and result.measurement_valid else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         result = self.coordinator.last_quarter
         if result is None:
-            return {"resolution_minutes": 15, "source_entity": self.coordinator.source_entity, "profile": self.coordinator.profile, "status": "waiting_for_first_quarter"}
-        return {"resolution_minutes": 15, "period_start": result.start.isoformat(), "period_end": result.end.isoformat(), "coverage": result.coverage, "valid": result.valid, "source_entity": self.coordinator.source_entity, "profile": result.profile}
+            return {
+                "resolution_minutes": 15,
+                "source_entity": self.coordinator.source_entity,
+                "profile": self.coordinator.profile,
+                "status": "waiting_for_first_quarter",
+            }
+        return {
+            "resolution_minutes": 15,
+            "period_start": result.start.isoformat(),
+            "period_end": result.end.isoformat(),
+            "coverage": result.coverage,
+            "measurement_valid": result.measurement_valid,
+            "learning_valid": result.learning_valid,
+            "learning_blocker": result.learning_blocker,
+            "valid": result.valid,
+            "source_entity": self.coordinator.source_entity,
+            "profile": result.profile,
+        }
 
 
 class DummyOSHistoryStatusSensor(DummyOSBaseSensor):
@@ -167,7 +201,15 @@ class DummyOSHistoryStatusSensor(DummyOSBaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         model = HomeBaselineForecast(self.coordinator.records)
-        return {"source_entity": self.coordinator.source_entity, "source_available": self.coordinator.source_available, "valid_quarters": self.coordinator.valid_quarters, "history_days": self.coordinator.history_days, "profile": self.coordinator.profile, "storage_limit_days": 400, "profile_statistics": model.all_profile_statistics()}
+        return {
+            "source_entity": self.coordinator.source_entity,
+            "source_available": self.coordinator.source_available,
+            "valid_quarters": self.coordinator.valid_quarters,
+            "history_days": self.coordinator.history_days,
+            "profile": self.coordinator.profile,
+            "storage_limit_days": 400,
+            "profile_statistics": model.all_profile_statistics(),
+        }
 
 
 class DummyOSHistoryDaysSensor(DummyOSBaseSensor):
@@ -199,7 +241,19 @@ class DummyOSForecastModelSensor(DummyOSBaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         model = HomeBaselineForecast(self.coordinator.records)
-        return {"model_version": "0.4", "forecast_active": True, "evaluation_active": True, "recency_weighting_active": True, "day_type_active": True, "dashboard_timeline_active": True, "resolution_minutes": 15, "horizon_hours": 72, "forecast_slots": FORECAST_SLOTS, "profile": self.coordinator.profile, "profile_statistics": model.profile_statistics(self.coordinator.profile)}
+        return {
+            "model_version": "0.4",
+            "forecast_active": self._profile_learnable,
+            "evaluation_active": self._profile_learnable,
+            "recency_weighting_active": self._profile_learnable,
+            "day_type_active": self._profile_learnable,
+            "dashboard_timeline_active": True,
+            "resolution_minutes": 15,
+            "horizon_hours": 72,
+            "forecast_slots": FORECAST_SLOTS,
+            "profile": self.coordinator.profile,
+            "profile_statistics": model.profile_statistics(self.coordinator.profile),
+        }
 
 
 class DummyOSHomeForecastSensor(DummyOSBaseSensor):
@@ -220,7 +274,21 @@ class DummyOSHomeForecastSensor(DummyOSBaseSensor):
         slots = self._forecast()
         populated = sum(1 for slot in slots if slot.energy_kwh is not None)
         supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
-        return {"profile": self.coordinator.profile, "model": "historical_baseline", "model_version": "0.4", "forecast_start": slots[0].start.isoformat() if slots else None, "resolution_minutes": 15, "horizon_hours": 72, "slot_count": len(slots), "populated_slots": populated, "supported_slots": supported, "coverage_percent": round(supported / len(slots) * 100, 1) if slots else 0.0, "average_confidence_percent": HomeBaselineForecast.average_confidence(slots), "timeline_entity": "sensor.do_energy_forecast_timeline"}
+        return {
+            "status": "ok" if self._profile_learnable else "profile_unclassified",
+            "profile": self.coordinator.profile,
+            "model": "historical_baseline",
+            "model_version": "0.4",
+            "forecast_start": slots[0].start.isoformat() if slots else None,
+            "resolution_minutes": 15,
+            "horizon_hours": 72,
+            "slot_count": len(slots),
+            "populated_slots": populated,
+            "supported_slots": supported,
+            "coverage_percent": round(supported / len(slots) * 100, 1) if slots else 0.0,
+            "average_confidence_percent": HomeBaselineForecast.average_confidence(slots),
+            "timeline_entity": "sensor.do_energy_forecast_timeline",
+        }
 
 
 class DummyOSHomeForecastTimelineSensor(DummyOSBaseSensor):
@@ -238,7 +306,21 @@ class DummyOSHomeForecastTimelineSensor(DummyOSBaseSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         slots = self._forecast()
         points = [[int(slot.start.timestamp() * 1000), slot.energy_kwh] for slot in slots if slot.energy_kwh is not None]
-        return {"profile": self.coordinator.profile, "model": "historical_baseline", "model_version": "0.4", "resolution_minutes": 15, "horizon_hours": 72, "slot_count": len(slots), "point_count": len(points), "point_format": "[unix_ms, kwh]", "forecast_start": slots[0].start.isoformat() if slots else None, "forecast_end": slots[-1].end.isoformat() if slots else None, "recorder_points": "excluded", "points": points}
+        return {
+            "status": "ok" if self._profile_learnable else "profile_unclassified",
+            "profile": self.coordinator.profile,
+            "model": "historical_baseline",
+            "model_version": "0.4",
+            "resolution_minutes": 15,
+            "horizon_hours": 72,
+            "slot_count": len(slots),
+            "point_count": len(points),
+            "point_format": "[unix_ms, kwh]",
+            "forecast_start": slots[0].start.isoformat() if slots else None,
+            "forecast_end": slots[-1].end.isoformat() if slots else None,
+            "recorder_points": "excluded",
+            "points": points,
+        }
 
 
 class DummyOSHomeForecastNextQuarterSensor(DummyOSBaseSensor):
@@ -260,7 +342,15 @@ class DummyOSHomeForecastNextQuarterSensor(DummyOSBaseSensor):
         if not slots:
             return {"status": "unavailable", "profile": self.coordinator.profile}
         slot = slots[0]
-        return {"period_start": slot.start.isoformat(), "period_end": slot.end.isoformat(), "profile": self.coordinator.profile, "sample_count": slot.sample_count, "source": slot.source, "confidence": slot.confidence}
+        return {
+            "status": "ok" if self._profile_learnable and slot.energy_kwh is not None else ("profile_unclassified" if not self._profile_learnable else "unavailable"),
+            "period_start": slot.start.isoformat(),
+            "period_end": slot.end.isoformat(),
+            "profile": self.coordinator.profile,
+            "sample_count": slot.sample_count,
+            "source": slot.source,
+            "confidence": slot.confidence,
+        }
 
 
 class DummyOSHomeForecastCoverageSensor(DummyOSBaseSensor):
@@ -283,7 +373,14 @@ class DummyOSHomeForecastCoverageSensor(DummyOSBaseSensor):
             sources[slot.source] = sources.get(slot.source, 0) + 1
         populated = sum(1 for slot in slots if slot.energy_kwh is not None)
         supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
-        return {"profile": self.coordinator.profile, "slot_count": len(slots), "populated_slots": populated, "supported_slots": supported, "source_distribution": sources}
+        return {
+            "status": "ok" if self._profile_learnable else "profile_unclassified",
+            "profile": self.coordinator.profile,
+            "slot_count": len(slots),
+            "populated_slots": populated,
+            "supported_slots": supported,
+            "source_distribution": sources,
+        }
 
 
 class DummyOSHomeForecastConfidenceSensor(DummyOSBaseSensor):
@@ -299,7 +396,13 @@ class DummyOSHomeForecastConfidenceSensor(DummyOSBaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"profile": self.coordinator.profile, "slot_count": len(self._forecast()), "model_version": "0.4", "confidence_basis": "historical_source_and_sample_support"}
+        return {
+            "status": "ok" if self._profile_learnable else "profile_unclassified",
+            "profile": self.coordinator.profile,
+            "slot_count": len(self._forecast()),
+            "model_version": "0.4",
+            "confidence_basis": "historical_source_and_sample_support",
+        }
 
 
 class DummyOSHomeForecastModelHealthSensor(DummyOSBaseSensor):
@@ -310,6 +413,8 @@ class DummyOSHomeForecastModelHealthSensor(DummyOSBaseSensor):
 
     @property
     def native_value(self) -> str:
+        if not self._profile_learnable:
+            return "profile_unclassified"
         slots = self._forecast()
         if not self.coordinator.source_available:
             return "source_unavailable"
@@ -329,7 +434,18 @@ class DummyOSHomeForecastModelHealthSensor(DummyOSBaseSensor):
         slots = self._forecast()
         supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
         metrics = self.coordinator.evaluation_metrics(self.coordinator.profile)
-        return {"profile": self.coordinator.profile, "model_version": "0.4", "forecast_coverage_percent": round(supported / len(slots) * 100, 1) if slots else 0.0, "average_confidence_percent": HomeBaselineForecast.average_confidence(slots), "evaluation_samples": metrics["samples"], "accuracy_percent": metrics["accuracy_percent"], "health_thresholds": {"usable": "coverage>=40%, samples>=32, confidence>=45%", "strong": "coverage>=80%, samples>=96, confidence>=65%"}}
+        return {
+            "profile": self.coordinator.profile,
+            "model_version": "0.4",
+            "forecast_coverage_percent": round(supported / len(slots) * 100, 1) if slots else 0.0,
+            "average_confidence_percent": HomeBaselineForecast.average_confidence(slots),
+            "evaluation_samples": metrics["samples"],
+            "accuracy_percent": metrics["accuracy_percent"],
+            "health_thresholds": {
+                "usable": "coverage>=40%, samples>=32, confidence>=45%",
+                "strong": "coverage>=80%, samples>=96, confidence>=65%",
+            },
+        }
 
 
 class DummyOSEvaluationBaseSensor(DummyOSBaseSensor):
@@ -430,12 +546,9 @@ class DummyOSHomeForecastQualityByDaypartSensor(DummyOSBaseSensor):
 
     @property
     def _quality(self) -> dict[str, Any]:
-        return calculate_daypart_quality(
-            self.coordinator.evaluations,
-            self.coordinator.records,
-            self.coordinator.profile,
-            dt_util.as_local,
-        )
+        if not self._profile_learnable:
+            return {"status": "blocked", "profile": self.coordinator.profile, "minimum_samples_for_sufficient_basis": 32, "dayparts": {}, "blockers": ["profile_unclassified"]}
+        return calculate_daypart_quality(self.coordinator.evaluations, self.coordinator.records, self.coordinator.profile, dt_util.as_local)
 
     @property
     def native_value(self) -> str:
@@ -444,14 +557,7 @@ class DummyOSHomeForecastQualityByDaypartSensor(DummyOSBaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         quality = self._quality
-        return {
-            "profile": quality["profile"],
-            "observer_only": True,
-            "resolution_minutes": 15,
-            "minimum_samples_for_sufficient_basis": quality["minimum_samples_for_sufficient_basis"],
-            "daypart_basis": "local_quarter_start",
-            "dayparts": quality["dayparts"],
-        }
+        return {"profile": quality["profile"], "observer_only": True, "resolution_minutes": 15, "minimum_samples_for_sufficient_basis": quality["minimum_samples_for_sufficient_basis"], "daypart_basis": "local_quarter_start", "dayparts": quality["dayparts"], "blockers": quality.get("blockers", [])}
 
 
 class DummyOSHomeForecastQualityByDayTypeSensor(DummyOSBaseSensor):
@@ -459,45 +565,69 @@ class DummyOSHomeForecastQualityByDayTypeSensor(DummyOSBaseSensor):
     _attr_unique_id = "do_energy_forecast_quality_by_day_type"
     _attr_suggested_object_id = "do_energy_forecast_quality_by_day_type"
     _attr_icon = "mdi:calendar-week"
+
     @property
-    def _quality(self) -> dict[str, Any]: return calculate_day_type_quality(self.coordinator.evaluations, self.coordinator.records, self.coordinator.profile, dt_util.as_local)
+    def _quality(self) -> dict[str, Any]:
+        if not self._profile_learnable:
+            return {"status": "blocked", "profile": self.coordinator.profile, "minimum_samples_for_sufficient_basis": 32, "day_types": {}, "blockers": ["profile_unclassified"]}
+        return calculate_day_type_quality(self.coordinator.evaluations, self.coordinator.records, self.coordinator.profile, dt_util.as_local)
+
     @property
-    def native_value(self) -> str: return str(self._quality["status"])
+    def native_value(self) -> str:
+        return str(self._quality["status"])
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        q=self._quality; return {"profile":q["profile"],"observer_only":True,"resolution_minutes":15,"minimum_samples_for_sufficient_basis":q["minimum_samples_for_sufficient_basis"],"day_type_basis":"local_quarter_start_weekday_weekend","day_types":q["day_types"]}
+        q = self._quality
+        return {"profile": q["profile"], "observer_only": True, "resolution_minutes": 15, "minimum_samples_for_sufficient_basis": q["minimum_samples_for_sufficient_basis"], "day_type_basis": "local_quarter_start_weekday_weekend", "day_types": q["day_types"], "blockers": q.get("blockers", [])}
 
 
 class DummyOSHomeForecastQualityByDayTypeAndDaypartSensor(DummyOSBaseSensor):
     """Observer-only Energy forecast quality by day type and daypart."""
+
     _attr_name = "DO Energy Forecast Quality By Day Type And Daypart"
     _attr_unique_id = "do_energy_forecast_quality_by_day_type_and_daypart"
     _attr_suggested_object_id = "do_energy_forecast_quality_by_day_type_and_daypart"
     _attr_icon = "mdi:calendar-clock"
+
     @property
     def _quality(self) -> dict[str, Any]:
+        if not self._profile_learnable:
+            return {"status": "blocked", "profile": self.coordinator.profile, "minimum_samples_for_sufficient_basis": 32, "combinations": {}, "blockers": ["profile_unclassified"]}
         return calculate_day_type_daypart_quality(self.coordinator.evaluations, self.coordinator.records, self.coordinator.profile, dt_util.as_local)
+
     @property
-    def native_value(self) -> str: return str(self._quality["status"])
+    def native_value(self) -> str:
+        return str(self._quality["status"])
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        q=self._quality; return {"profile":q["profile"],"observer_only":True,"resolution_minutes":15,"minimum_samples_for_sufficient_basis":q["minimum_samples_for_sufficient_basis"],"combination_basis":"local_quarter_start_day_type_and_daypart","combinations":q["combinations"]}
+        q = self._quality
+        return {"profile": q["profile"], "observer_only": True, "resolution_minutes": 15, "minimum_samples_for_sufficient_basis": q["minimum_samples_for_sufficient_basis"], "combination_basis": "local_quarter_start_day_type_and_daypart", "combinations": q["combinations"], "blockers": q.get("blockers", [])}
 
 
 class DummyOSHomeForecastQualityByHourSensor(DummyOSBaseSensor):
     """Observer-only Energy forecast quality per local afternoon hour."""
+
     _attr_name = "DO Energy Forecast Quality By Hour"
     _attr_unique_id = "do_energy_forecast_quality_by_hour"
     _attr_suggested_object_id = "do_energy_forecast_quality_by_hour"
     _attr_icon = "mdi:clock-outline"
+
     @property
     def _quality(self) -> dict[str, Any]:
+        if not self._profile_learnable:
+            return {"status": "blocked", "profile": self.coordinator.profile, "minimum_samples_for_sufficient_basis": 32, "scope": "afternoon_12_18", "hours": {}, "blockers": ["profile_unclassified"]}
         return calculate_hour_quality(self.coordinator.evaluations, self.coordinator.records, self.coordinator.profile, dt_util.as_local)
+
     @property
-    def native_value(self) -> str: return str(self._quality["status"])
+    def native_value(self) -> str:
+        return str(self._quality["status"])
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        q=self._quality; return {"profile":q["profile"],"observer_only":True,"resolution_minutes":15,"minimum_samples_for_sufficient_basis":q["minimum_samples_for_sufficient_basis"],"hour_basis":"local_quarter_start","scope":q["scope"],"hours":q["hours"]}
+        q = self._quality
+        return {"profile": q["profile"], "observer_only": True, "resolution_minutes": 15, "minimum_samples_for_sufficient_basis": q["minimum_samples_for_sufficient_basis"], "hour_basis": "local_quarter_start", "scope": q["scope"], "hours": q["hours"], "blockers": q.get("blockers", [])}
 
 
 class DummyOSWeatherCurrentSensor(DummyOSWeatherBaseSensor):
@@ -623,13 +753,57 @@ class DummyOSEnergyTimeWindowsSensor(DummyOSBaseSensor):
     _attr_unique_id = "do_energy_time_windows"
     _attr_suggested_object_id = "do_energy_time_windows"
     _attr_icon = "mdi:timeline-clock-outline"
+
     @property
     def name(self) -> str:
         """Return the canonical runtime name used for friendly_name."""
         return "DO Energy Time Windows"
 
-
     def _result(self) -> dict[str, Any]:
+        if not self._profile_learnable:
+            return {
+                "schema_version": "7b.1",
+                "algorithm_version": "time_windows_observer_v1",
+                "profile": self.coordinator.profile,
+                "context_key": f"{self.coordinator.profile}|profile_unclassified",
+                "classification_source": "profile_unclassified",
+                "observer_only": True,
+                "forecast_influence_enabled": False,
+                "ready_for_live_observation": False,
+                "ready_for_forecast_influence": False,
+                "event_count": 0,
+                "event_days": 0,
+                "rejected_event_count": 0,
+                "reject_reasons": {},
+                "window_start": None,
+                "window_end": None,
+                "window_width_minutes": None,
+                "window_quarter_count": None,
+                "p10_start_minute": None,
+                "p90_end_minute": None,
+                "median_center_minute": None,
+                "center_mad_minutes": None,
+                "contained_day_count": None,
+                "contained_day_ratio": None,
+                "median_event_duration_minutes": None,
+                "median_daily_energy_kwh": None,
+                "energy_iqr_kwh": None,
+                "lodo_max_start_shift_minutes": None,
+                "lodo_max_end_shift_minutes": None,
+                "early_late_start_shift_minutes": None,
+                "early_late_end_shift_minutes": None,
+                "protected_window_overlap": False,
+                "native_resolution_minutes": 15,
+                "calibration_method": "daily_representative_p10_start_p90_end",
+                "minimum_event_days_collecting_exit": 8,
+                "minimum_event_days_calibrated": 12,
+                "minimum_event_days_stable": 16,
+                "maximum_boundary_shift_minutes": 15,
+                "source_basis": {},
+                "calibration_fingerprint": None,
+                "blockers": ["profile_unclassified"],
+                "status": "blocked",
+            }
         peak_result = calculate_peak_learning(self.coordinator.evaluations, self.coordinator.profile, dt_util.as_local)
         return calculate_time_windows(peak_result, self.coordinator.profile, dt_util.as_local)
 
@@ -699,12 +873,18 @@ class DummyOSEnergyRecencyWeightingSensor(DummyOSBaseSensor):
         return "DO Energy Recency Weighting"
 
     def _result(self) -> dict[str, Any]:
-        return calculate_recency_weighting(
-            self.coordinator.records,
-            self.coordinator.evaluations,
-            self.coordinator.profile,
-            dt_util.as_local,
-        )
+        if not self._profile_learnable:
+            return {
+                "schema_version": "8a.1",
+                "algorithm_version": "recency_weighting_observer_v1",
+                "status": "blocked",
+                "profile": self.coordinator.profile,
+                "observer_only": True,
+                "forecast_influence_enabled": False,
+                "promotion_ready": False,
+                "blockers": ["profile_unclassified"],
+            }
+        return calculate_recency_weighting(self.coordinator.records, self.coordinator.evaluations, self.coordinator.profile, dt_util.as_local)
 
     @property
     def native_value(self) -> str:
@@ -723,18 +903,40 @@ class DummyOSEnergyPeakLearningSensor(DummyOSBaseSensor):
     _attr_suggested_object_id = "do_energy_peak_learning"
     _attr_icon = "mdi:chart-bell-curve-cumulative"
     _unrecorded_attributes = frozenset({"calibration", "classifications", "events"})
+
     @property
     def name(self) -> str:
         """Return the canonical runtime name used for friendly_name."""
         return "DO Energy Peak Learning"
 
-
     def _result(self) -> dict[str, Any]:
+        if not self._profile_learnable:
+            return {
+                "schema_version": 1,
+                "algorithm_version": "peak_observer_v1",
+                "calibration_fingerprint": None,
+                "source_basis": {},
+                "profile": self.coordinator.profile,
+                "status": "blocked",
+                "minimum_samples_per_hour": 32,
+                "minimum_distinct_days_per_hour": 8,
+                "threshold_method": "leave_one_local_day_out_positive_residual_quantile",
+                "threshold_quantile": 0.9,
+                "candidate_count": 0,
+                "event_count": 0,
+                "calibrated_hours": 0,
+                "classification_calibration": {},
+                "protected_windows": {},
+                "calibration": {},
+                "classifications": {},
+                "events": [],
+                "blockers": ["profile_unclassified"],
+            }
         return calculate_peak_learning(self.coordinator.evaluations, self.coordinator.profile, dt_util.as_local)
 
     @property
     def native_value(self) -> str:
-        return str(self._result()["status"])
+        return str(self._result().get("status", "collecting"))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -760,4 +962,5 @@ class DummyOSEnergyPeakLearningSensor(DummyOSBaseSensor):
             "calibration": result["calibration"],
             "classifications": result["classifications"],
             "events": result["events"],
+            "blockers": result.get("blockers", []),
         }

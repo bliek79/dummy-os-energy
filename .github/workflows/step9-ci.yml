@@ -1,0 +1,62 @@
+name: Validate Step 9 Profile Contract
+
+on:
+  push:
+    branches:
+      - energy-step9-profile-contract-v1
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pytest
+      - name: Compile sources
+        run: python -m compileall -q custom_components/dummy_os_data tests
+      - name: Run full tests
+        run: python -m pytest -q
+      - name: Validate manifest
+        run: python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
+      - name: Verify Step 9 profile contract
+        run: |
+          grep -F 'ENERGY_STORE_SCHEMA_VERSION = 2' custom_components/dummy_os_data/const.py
+          grep -F 'PROFILE_CONTRACT_VERSION = 1' custom_components/dummy_os_data/const.py
+          grep -F 'PROFILE_UNCLASSIFIED = "unclassified"' custom_components/dummy_os_data/const.py
+          grep -F 'PROFILE_MIXED = "mixed"' custom_components/dummy_os_data/const.py
+          grep -F 'PROFILE_LEARNING_OPTIONS = [PROFILE_NORMAL, PROFILE_AWAY]' custom_components/dummy_os_data/const.py
+          grep -F 'PROFILE_OPTIONS = [PROFILE_NORMAL, PROFILE_AWAY, PROFILE_UNCLASSIFIED]' custom_components/dummy_os_data/const.py
+          grep -F 'FORECAST_HORIZON_HOURS = 72' custom_components/dummy_os_data/const.py
+          grep -F 'QUARTER_MINUTES = 15' custom_components/dummy_os_data/const.py
+          grep -F 'RECENCY_HALF_LIFE_DAYS = 28.0' custom_components/dummy_os_data/forecast.py
+      - name: Verify alpha.12.18 runtime gate survives
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          src = Path('custom_components/dummy_os_data/coordinator.py').read_text()
+          start = src.index('def _async_source_changed')
+          end = src.index('@staticmethod', start)
+          block = src[start:end]
+          assert 'self._integrate_until(now)' in block
+          assert 'self._notify()' not in block
+          PY
+      - name: Build validation ZIP
+        run: |
+          zip -r Dummy_OS_Forecast_step9_validation.zip custom_components/dummy_os_data -x '*/__pycache__/*' '*.pyc'
+          sha256sum Dummy_OS_Forecast_step9_validation.zip > SHA256SUMS-step9-validation.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: step9-validation-build
+          path: |
+            Dummy_OS_Forecast_step9_validation.zip
+            SHA256SUMS-step9-validation.txt

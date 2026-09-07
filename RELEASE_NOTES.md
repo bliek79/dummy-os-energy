@@ -1,37 +1,60 @@
 # GitHub Release
 
-**Tag:** `0.1.0-alpha.12.18`  
-**Release title:** Dummy OS Forecast 0.1.0-alpha.12.18 - Stable Foundation Reset
+**Tag:** `0.1.0-alpha.12.19`  
+**Release title:** Dummy OS Forecast 0.1.0-alpha.12.19 - Energy Profile Contract v1
 
-## Dummy OS Forecast 0.1.0-alpha.12.18
+## Dummy OS Forecast 0.1.0-alpha.12.19
 
-Deze pre-release is een stabiliteitsrelease. Er wordt geen nieuwe forecastfunctionaliteit toegevoegd. Het doel is de bestaande Dummy OS Forecast-runtime terug te brengen naar een beheersbaar fundament voordat verdere modelontwikkeling wordt hervat.
+Deze pre-release implementeert Stap 9 van de Energy Forecast-route: een expliciet en veilig profielcontract voor `normal`, `away` en `unclassified`, zonder het productieforecastmodel of de native 15-minuten / 72-uur / 288-slot architectuur te wijzigen.
 
-### Opgelost
-- Snelle state-wijzigingen van `sensor.do_source_home_power` blijven het lopende kwartier exact integreren, maar starten niet langer een volledige `_notify()`-fan-out naar alle Energy Forecast- en analyse-entiteiten.
-- Zware Energy Forecast-/observerberekeningen worden daardoor niet meer bij iedere live vermogenswijziging opnieuw door Home Assistant aangeroepen.
-- Kwartiergrenzen en expliciete profielwijzigingen blijven geldige refreshmomenten voor de Energy Forecast-laag.
+### Nieuw
+- `select.do_energy_profile` ondersteunt nu `normal`, `away` en `unclassified` als expliciete publieke toestanden.
+- `mixed` is een interne kwartiertoestand wanneer binnen één kwartier van profiel is gewisseld; deze toestand is niet selecteerbaar.
+- Profielmetadata wordt persistent bijgehouden met `profile_contract_version`, `previous_profile`, `profile_changed_at` en `profile_change_source`.
+- Een ontbrekend of ongeldig opgeslagen profiel wordt veilig `unclassified`; er wordt niet stilzwijgend naar `normal` teruggevallen.
 
-### Stabiliteitsgate
-- Nieuwe regressietest borgt dat live Home Power-updates wel integreren maar niet de forecastlaag notificeren.
-- Kwartiergrens blijft de normale Energy-refreshtrigger.
-- Profielwijziging blijft een expliciete refreshtrigger.
-- Compile, manifestcontrole en volledige regressietestset zijn verplicht vóór publicatie.
+### Kwartier- en leercontract
+- Werkelijke kwartiermeting en modelleerbaarheid zijn van elkaar gescheiden via `measurement_valid` en `learning_valid`.
+- Het bestaande veld `valid` blijft backward-compatible en volgt `learning_valid`.
+- Een betrouwbaar gemeten `mixed`- of `unclassified`-kwartier behoudt zijn gemeten kWh, maar wordt niet gebruikt voor leren of forward evaluation.
+- Mogelijke blockers worden expliciet gepubliceerd, waaronder `insufficient_coverage`, `profile_changed` en `profile_unclassified`.
+
+### Forecastgedrag
+- `normal` en `away` blijven volledig van elkaar geïsoleerd en mogen nooit elkaars historie gebruiken.
+- `unclassified` behoudt het vaste tijdcontract van exact 288 kwartierslots, maar publiceert geen ingevulde forecastwaarden en leent geen historie van `normal` of `away`.
+- `historical_baseline` blijft modelversie `0.4`.
+- De productie-recency blijft een half-life van 28 dagen.
+- Peak Learning, Time Windows en Recency Weighting blijven observer-only; onder `unclassified` worden zij expliciet geblokkeerd in plaats van nieuwe leerbasis op te bouwen.
+
+### Kwartiergrens-hardening
+- Profielwisselingen verwerken eerst reeds verstreken kwartiergrenzen en passen daarna het nieuwe profiel toe.
+- Een wijziging exact op een kwartiergrens houdt het afgesloten kwartier schoon en gebruikt het nieuwe profiel voor het nieuwe kwartier.
+- Opnieuw kiezen van hetzelfde profiel veroorzaakt geen kunstmatige profielwisseling.
+
+### Stabiliteit behouden
+- De alpha.12.18 runtimegate blijft intact: snelle wijzigingen van `sensor.do_source_home_power` integreren energie, maar veroorzaken geen volledige Forecast-/observer `_notify()`-fan-out.
+- Kwartiergrenzen en echte profielwijzigingen blijven relevante refreshmomenten.
 
 ### Ongewijzigd
-- Native architectuur blijft exact 15 minuten / 72 uur / 288 slots.
-- Bestaande Energy Forecast-historie, snapshots en evaluaties worden niet verwijderd.
-- Het productie-forecastmodel en de huidige 28-daagse recency-weging blijven functioneel ongewijzigd.
-- Solar, Weather, Prices en Degree Days worden in deze gerichte stabiliteitsrelease niet functioneel herschreven.
-- Dummy OS EMS en fysieke batterijbesturing worden niet gewijzigd.
+- Native architectuur: exact 15 minuten / 72 uur / 288 slots.
+- Bestaande Normal-historie, forecast-snapshots en evaluaties worden niet gewist.
+- Weather, Solar, Prices en Degree Days zijn functioneel niet gewijzigd.
+- Dummy OS EMS en fysieke batterijbesturing zijn niet gewijzigd.
+- EMS blijft voorlopig zijn bestaande externe Home Forecast gebruiken; migratie naar Dummy OS Forecast is geen onderdeel van deze release.
 
-### Bekend / nog geblokkeerd
-- De integratiebrede Home Assistant `friendly_name`-/device-name-identiteitskwestie is nog niet als live opgelost bewezen en blijft afzonderlijk onderdeel van de stabilisatie.
-- Peak Learning, Time Windows, Recency Weighting en uitgebreide kwaliteitsdiagnostiek blijven onderwerp van de Minimal Core-ontleding; deze release verwijdert geen historische data.
+### Technische validatie
+Releasekandidaat vereist vóór publicatie:
+- volledige Python compilecontrole;
+- volledige regressietestset groen;
+- manifest JSON geldig;
+- Step 9 profielcontractgate groen;
+- alpha.12.18 snelle source-runtimegate groen;
+- installatie-ZIP en SHA256-checksum gebouwd uit exact dezelfde releasecommit.
 
 ### Live validatie na installatie
-- Bevestigen dat Dummy OS Forecast zonder fout start na upgrade vanaf alpha.12.17.
-- Minimaal één volledig kwartier laten voltooien en controleren dat `sensor.do_energy_actual_quarter` normaal blijft vullen.
-- Controleren dat de 72-uurs Energy Forecast 288 kwartierslots blijft leveren.
-- Home Assistant-responsiviteit vergelijken met alpha.12.17, met bijzondere aandacht voor snelle Home Power-wijzigingen.
-- Controleren dat bestaande historie en profielinstelling behouden zijn.
+- Bevestigen dat bestaande `normal`-historie en evaluaties behouden blijven na upgrade vanaf alpha.12.18.
+- Minimaal één volledig Normal-kwartier controleren op `measurement_valid: true`, `learning_valid: true` en normale forward evaluation.
+- Een gecontroleerde profielwisseling testen en bevestigen dat het overgangskwartier `mixed` wordt, gemeten energie behoudt en niet wordt geleerd.
+- `unclassified` kort testen: 288 slots blijven aanwezig, maar zonder ingevulde forecastwaarden en zonder nieuwe observer-leerdata.
+- `normal` herstellen en bevestigen dat de bestaande 72-uursforecast opnieuw 288 gevulde kwartierslots levert.
+- Home Assistant-responsiviteit blijven controleren om te bevestigen dat de alpha.12.18 stabiliteitswinst behouden blijft.
