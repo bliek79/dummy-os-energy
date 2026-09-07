@@ -13,6 +13,7 @@ from homeassistant.const import UnitOfPower
 from homeassistant.core import Event, EventStateChangedData, State, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_BATTERY_CHARGE_POWER_ENTITY,
@@ -21,9 +22,11 @@ from .const import (
     CONF_GRID_NET_POWER_ENTITY,
     DOMAIN,
     NAME,
+    PROFILE_LEARNING_OPTIONS,
     VERSION,
 )
 from .coordinator import DummyOSHomeDataCoordinator
+from .fallback_hierarchy import calculate_fallback_hierarchy
 
 POSITIVE_SOURCE_DEFINITIONS: tuple[tuple[str, str, str, str], ...] = (
     (
@@ -313,10 +316,100 @@ class DummyOSSourceHomePowerSensor(DummyOSSourcePowerBaseSensor):
         }
 
 
+class DummyOSEnergyFallbackHierarchySensor(SensorEntity):
+    """Observer-only Step 10 Energy fallback-hierarchy diagnostics."""
+
+    _attr_should_poll = False
+    _attr_has_entity_name = False
+    _attr_name = "DO Energy Fallback Hierarchy"
+    _attr_unique_id = "do_energy_fallback_hierarchy"
+    _attr_suggested_object_id = "do_energy_fallback_hierarchy"
+    _attr_icon = "mdi:call-split"
+    _unrecorded_attributes = frozenset(
+        {"per_level_metrics", "day_type_daypart_metrics", "early_late_metrics"}
+    )
+
+    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
+        self.coordinator = coordinator
+        self._remove_listener = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, "main")},
+            name=NAME,
+            manufacturer="Dummy OS",
+            model="Forecast Platform",
+            sw_version=VERSION,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._remove_listener = self.coordinator.async_add_listener(self._handle_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._remove_listener is not None:
+            self._remove_listener()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    def _result(self) -> dict[str, Any]:
+        if self.coordinator.profile not in PROFILE_LEARNING_OPTIONS:
+            return {
+                "schema_version": 1,
+                "algorithm_version": "fallback_hierarchy_observer_v1",
+                "status": "inactive_profile",
+                "profile": self.coordinator.profile,
+                "observer_only": True,
+                "forecast_influence_enabled": False,
+                "native_resolution_minutes": 15,
+                "production_model": "historical_baseline",
+                "production_model_version": "0.4",
+                "control_recency_half_life_days": 28.0,
+                "control_hierarchy": ["weekday_quarter", "day_type_quarter", "quarter_of_day", "profile_mean"],
+                "candidate_hierarchy": ["weekday_quarter", "day_type_quarter", "nearby_quarter_day_type", "same_hour_profile", "daypart_profile", "profile_global_median"],
+                "evaluation_count": 0,
+                "distinct_local_days": 0,
+                "eligible_level_shadow_count": 0,
+                "hierarchy_changed_selection_count": 0,
+                "fallback_activation_counts": {},
+                "excluded_record_counts": {},
+                "control_metrics": {},
+                "candidate_metrics": {},
+                "per_level_metrics": {},
+                "day_type_daypart_metrics": {},
+                "early_late_metrics": {},
+                "preferred_candidate_hierarchy": ["weekday_quarter", "day_type_quarter", "nearby_quarter_day_type", "same_hour_profile", "daypart_profile", "profile_global_median"],
+                "replay_candidate_supported": False,
+                "promotion_ready": False,
+                "live_shadow_required": True,
+                "blockers": ["profile_unclassified"],
+                "promotion_blockers": ["profile_unclassified", "live_shadow_required"],
+                "calibration_fingerprint": None,
+            }
+        return calculate_fallback_hierarchy(
+            self.coordinator.records,
+            self.coordinator.evaluations,
+            self.coordinator.profile,
+            dt_util.as_local,
+        )
+
+    @property
+    def native_value(self) -> str:
+        return str(self._result()["status"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self._result())
+
+
 def build_home_input_sensors(
     coordinator: DummyOSHomeDataCoordinator,
 ) -> list[SensorEntity]:
-    """Build the definitive canonical Source energy-flow sensor set."""
+    """Build the definitive canonical Source energy-flow sensor set plus observers."""
     entities: list[SensorEntity] = [
         DummyOSSourceGridNetPowerSensor(coordinator),
         DummyOSSourceGridSplitPowerSensor(coordinator, export=False),
@@ -333,4 +426,5 @@ def build_home_input_sensors(
         for config_key, object_id, name, icon in POSITIVE_SOURCE_DEFINITIONS
     )
     entities.append(DummyOSSourceHomePowerSensor(coordinator))
+    entities.append(DummyOSEnergyFallbackHierarchySensor(coordinator))
     return entities
