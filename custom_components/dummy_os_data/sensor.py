@@ -34,6 +34,8 @@ from .evaluation import (
 from .time_windows import calculate_time_windows
 from .recency_weighting import calculate_recency_weighting
 from .forecast import HomeBaselineForecast
+from .horizon_quality import calculate_horizon_quality
+from .model_health import calculate_model_health_readiness
 from .home_input_sensor import build_home_input_sensors
 from .solar_sensor import build_solar_sensors
 from .weather import (
@@ -411,41 +413,50 @@ class DummyOSHomeForecastModelHealthSensor(DummyOSBaseSensor):
     _attr_suggested_object_id = "do_energy_forecast_model_health"
     _attr_icon = "mdi:heart-pulse"
 
+    def _readiness(self) -> dict[str, Any]:
+        slots = self._forecast()
+        supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
+        coverage = round(supported / len(slots) * 100, 1) if slots else None
+        confidence = HomeBaselineForecast.average_confidence(slots)
+        metrics = self.coordinator.evaluation_metrics(self.coordinator.profile)
+        horizon_quality = calculate_horizon_quality(
+            self.coordinator.horizon_daily_stats,
+            self.coordinator.profile,
+        )
+        day_type_daypart_quality = calculate_day_type_daypart_quality(
+            self.coordinator.evaluations,
+            self.coordinator.records,
+            self.coordinator.profile,
+            dt_util.as_local,
+        )
+        hour_quality = calculate_hour_quality(
+            self.coordinator.evaluations,
+            self.coordinator.records,
+            self.coordinator.profile,
+            dt_util.as_local,
+        )
+        return calculate_model_health_readiness(
+            records=self.coordinator.records,
+            profile=self.coordinator.profile,
+            source_available=self.coordinator.source_available,
+            forecast_coverage_percent=coverage,
+            average_confidence_percent=confidence,
+            evaluation_metrics=metrics,
+            horizon_quality=horizon_quality,
+            day_type_daypart_quality=day_type_daypart_quality,
+            hour_quality=hour_quality,
+            localize=dt_util.as_local,
+        )
+
     @property
     def native_value(self) -> str:
         if not self._profile_learnable:
             return "profile_unclassified"
-        slots = self._forecast()
-        if not self.coordinator.source_available:
-            return "source_unavailable"
-        if self.coordinator.valid_quarters == 0:
-            return "collecting"
-        coverage = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES) / len(slots) if slots else 0.0
-        samples = int(self.coordinator.evaluation_metrics(self.coordinator.profile)["samples"])
-        confidence = HomeBaselineForecast.average_confidence(slots) or 0.0
-        if coverage >= 0.80 and samples >= 96 and confidence >= 65.0:
-            return "strong"
-        if coverage >= 0.40 and samples >= 32 and confidence >= 45.0:
-            return "usable"
-        return "learning"
+        return str(self._readiness()["readiness_status"])
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        slots = self._forecast()
-        supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
-        metrics = self.coordinator.evaluation_metrics(self.coordinator.profile)
-        return {
-            "profile": self.coordinator.profile,
-            "model_version": "0.4",
-            "forecast_coverage_percent": round(supported / len(slots) * 100, 1) if slots else 0.0,
-            "average_confidence_percent": HomeBaselineForecast.average_confidence(slots),
-            "evaluation_samples": metrics["samples"],
-            "accuracy_percent": metrics["accuracy_percent"],
-            "health_thresholds": {
-                "usable": "coverage>=40%, samples>=32, confidence>=45%",
-                "strong": "coverage>=80%, samples>=96, confidence>=65%",
-            },
-        }
+        return dict(self._readiness())
 
 
 class DummyOSEvaluationBaseSensor(DummyOSBaseSensor):
