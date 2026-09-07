@@ -39,7 +39,7 @@ jobs:
           grep -F 'MODEL_HEALTH_CONTRACT_VERSION = 2' custom_components/dummy_os_data/model_health.py
           grep -F 'return "profile_unclassified"' custom_components/dummy_os_data/sensor.py
           grep -F 'FORECAST_HORIZON_HOURS = 72' custom_components/dummy_os_data/const.py
-          grep -F 'FORECAST_SLOTS = 288' custom_components/dummy_os_data/const.py
+          python -c 'import importlib.util; s=importlib.util.spec_from_file_location("c","custom_components/dummy_os_data/const.py"); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); assert m.FORECAST_SLOTS == 288'
           grep -F 'RECENCY_HALF_LIFE_DAYS = 28.0' custom_components/dummy_os_data/forecast.py
           test "$(git diff 0.1.0-alpha.12.23 -- custom_components/dummy_os_data/forecast.py | wc -l)" -eq 0
       - name: Commit release metadata and remove temporary files
@@ -50,4 +50,4 @@ jobs:
           git rm .github/scripts/prepare_alpha12_24.py .github/workflows/prepare-alpha12-24.yml
           git commit -m "Release alpha.12.24: Step 13 Model Health readiness"
           git push origin HEAD:release-alpha12-24-step13-health
-# retry with release-consistency version bump
+# retry with semantic 288-slot assertion
