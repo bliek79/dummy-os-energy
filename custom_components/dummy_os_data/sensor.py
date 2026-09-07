@@ -36,6 +36,10 @@ from .recency_weighting import calculate_recency_weighting
 from .forecast import HomeBaselineForecast
 from .horizon_quality import calculate_horizon_quality
 from .model_health import calculate_model_health_readiness
+from .planner_hours import (
+    aggregate_planner_hours,
+    required_generated_slot_count,
+)
 from .home_input_sensor import build_home_input_sensors
 from .solar_sensor import build_solar_sensors
 from .weather import (
@@ -65,6 +69,7 @@ async def async_setup_entry(
             DummyOSForecastModelSensor(coordinator),
             DummyOSHomeForecastSensor(coordinator),
             DummyOSHomeForecastTimelineSensor(coordinator),
+            DummyOSEnergyForecastPlannerHoursSensor(coordinator),
             DummyOSHomeForecastNextQuarterSensor(coordinator),
             DummyOSHomeForecastCoverageSensor(coordinator),
             DummyOSHomeForecastConfidenceSensor(coordinator),
@@ -323,6 +328,45 @@ class DummyOSHomeForecastTimelineSensor(DummyOSBaseSensor):
             "recorder_points": "excluded",
             "points": points,
         }
+
+
+class DummyOSEnergyForecastPlannerHoursSensor(DummyOSBaseSensor):
+    """Step 14 exact 72 complete planner-hour forecast interface."""
+
+    _attr_name = "DO Energy Forecast Planner Hours"
+    _attr_unique_id = "do_energy_forecast_planner_hours"
+    _attr_suggested_object_id = "do_energy_forecast_planner_hours"
+    _attr_icon = "mdi:clock-outline"
+    _unrecorded_attributes = frozenset({"hours"})
+
+    def _result(self) -> dict[str, Any]:
+        now = dt_util.utcnow()
+        model = HomeBaselineForecast(self.coordinator.records)
+        public_slots = model.build(self.coordinator.profile, now=now)
+        if not public_slots:
+            return aggregate_planner_hours(
+                [], profile=self.coordinator.profile, localize=dt_util.as_local
+            )
+        generated_count = required_generated_slot_count(
+            public_slots[0].start, dt_util.as_local
+        )
+        extended_slots = model.build(
+            self.coordinator.profile, now=now, slot_count=generated_count
+        )
+        result = aggregate_planner_hours(
+            extended_slots, profile=self.coordinator.profile, localize=dt_util.as_local
+        )
+        if not self._profile_learnable:
+            result["status"] = "profile_unclassified"
+        return result
+
+    @property
+    def native_value(self) -> int:
+        return int(self._result()["valid_hour_count"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self._result())
 
 
 class DummyOSHomeForecastNextQuarterSensor(DummyOSBaseSensor):

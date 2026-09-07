@@ -76,7 +76,8 @@ def test_unclassified_forecast_keeps_288_slots_without_borrowing_history():
     assert "if profile not in PROFILE_LEARNING_OPTIONS:" in forecast
     assert "return exact, day_type, quarter, all_values" in forecast
     assert 'source = "profile_unclassified" if profile not in PROFILE_LEARNING_OPTIONS else "unavailable"' in forecast
-    assert "for offset in range(FORECAST_SLOTS):" in forecast
+    assert "slot_count: int = FORECAST_SLOTS" in forecast
+    assert "for offset in range(slot_count):" in forecast
 
 
 def test_actual_quarter_keeps_measured_energy_when_learning_is_blocked():

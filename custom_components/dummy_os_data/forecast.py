@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 from .const import FORECAST_SLOTS, PROFILE_LEARNING_OPTIONS, QUARTER_MINUTES
 
 RECENCY_HALF_LIFE_DAYS = 28.0
+MAX_INTERNAL_FORECAST_SLOTS = FORECAST_SLOTS + 3
 
 
 @dataclass(slots=True)
@@ -115,6 +116,11 @@ class HomeBaselineForecast:
 
     def profile_statistics(self, profile: str) -> dict[str, Any]:
         """Return compact historical statistics for one profile."""
+        if slot_count < 1 or slot_count > MAX_INTERNAL_FORECAST_SLOTS:
+            raise ValueError(
+                f"slot_count must be between 1 and {MAX_INTERNAL_FORECAST_SLOTS}"
+            )
+
         exact, day_type, quarter, all_values = self._history(profile)
         reference = dt_util.utcnow()
         weighted_mean = self._weighted_mean(all_values, reference)
@@ -144,8 +150,18 @@ class HomeBaselineForecast:
             for profile in PROFILE_LEARNING_OPTIONS
         }
 
-    def build(self, profile: str, now: datetime | None = None) -> list[ForecastSlot]:
-        """Build 288 native 15-minute forecast slots from historical data.
+    def build(
+        self,
+        profile: str,
+        now: datetime | None = None,
+        *,
+        slot_count: int = FORECAST_SLOTS,
+    ) -> list[ForecastSlot]:
+        """Build native 15-minute forecast slots from historical data.
+
+        The public/default contract remains exactly 288 slots. Step 14 may
+        explicitly request at most three additional native quarters solely to
+        complete 72 full planner hours without padding.
 
         Non-learnable profile contexts deliberately produce the same 288-slot
         time contract with unavailable values. This preserves planner-facing
@@ -161,7 +177,7 @@ class HomeBaselineForecast:
         start_utc = dt_util.as_utc(next_local)
 
         result: list[ForecastSlot] = []
-        for offset in range(FORECAST_SLOTS):
+        for offset in range(slot_count):
             slot_start_utc = start_utc + timedelta(minutes=offset * QUARTER_MINUTES)
             slot_end_utc = slot_start_utc + timedelta(minutes=QUARTER_MINUTES)
             slot_start_local = dt_util.as_local(slot_start_utc)
