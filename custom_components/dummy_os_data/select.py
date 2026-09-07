@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN, NAME, PROFILE_OPTIONS, VERSION
+from .const import (
+    DOMAIN,
+    NAME,
+    PROFILE_CONTRACT_VERSION,
+    PROFILE_LEARNING_OPTIONS,
+    PROFILE_OPTIONS,
+    VERSION,
+)
 from .coordinator import DummyOSHomeDataCoordinator
 
 
@@ -41,6 +50,19 @@ class DummyOSEnergyProfileSelect(SelectEntity):
         return self.coordinator.profile
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        learning_enabled = self.coordinator.profile in PROFILE_LEARNING_OPTIONS
+        return {
+            "profile_contract_version": PROFILE_CONTRACT_VERSION,
+            "profile_resolved": learning_enabled,
+            "learning_enabled": learning_enabled,
+            "forecast_enabled": learning_enabled,
+            "previous_profile": self.coordinator.previous_profile,
+            "profile_changed_at": self.coordinator.profile_changed_at,
+            "profile_change_source": self.coordinator.profile_change_source,
+        }
+
+    @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, "main")},
@@ -53,7 +75,7 @@ class DummyOSEnergyProfileSelect(SelectEntity):
     async def async_select_option(self, option: str) -> None:
         if option not in PROFILE_OPTIONS:
             raise ValueError(f"Unsupported profile: {option}")
-        await self.coordinator.async_set_profile(option)
+        await self.coordinator.async_set_profile(option, source="manual_select")
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
