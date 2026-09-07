@@ -24,7 +24,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Apply Step 14 patch
-        run: python .github/scripts/step14_patch.py
+        run: |
+          python .github/scripts/step14_patch.py
+          python .github/scripts/step14_test_patch.py
       - name: Validate
         run: |
           python -m pip install --upgrade pytest
@@ -40,7 +42,7 @@ jobs:
         run: |
           git config user.name "Stefan"
           git config user.email "111599445+bliek79@users.noreply.github.com"
-          git add custom_components/dummy_os_data tests/test_horizon_quality_sensor_contract.py tests/test_planner_hours.py tests/test_planner_hours_sensor_contract.py
-          git rm .github/scripts/step14_patch.py .github/workflows/step14-bootstrap.yml
+          git add custom_components/dummy_os_data tests/test_horizon_quality_sensor_contract.py tests/test_energy_profile_contract_step9.py tests/test_planner_hours.py tests/test_planner_hours_sensor_contract.py
+          git rm .github/scripts/step14_patch.py .github/scripts/step14_test_patch.py .github/workflows/step14-bootstrap.yml
           git commit -m "Step 14: exact 72 complete planner hours"
           git push origin HEAD:step14-exact-72-planner-hours
