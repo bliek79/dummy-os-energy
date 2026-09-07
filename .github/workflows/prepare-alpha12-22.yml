@@ -1,0 +1,63 @@
+name: Prepare Dummy OS Forecast alpha.12.22
+
+on:
+  push:
+    branches:
+      - release-alpha12-22-step11-confidence
+    paths:
+      - .github/workflows/prepare-alpha12-22.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release-alpha12-22-step11-confidence
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare release metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          version = '0.1.0-alpha.12.22'
+          for path in [Path('custom_components/dummy_os_data/const.py'), Path('custom_components/dummy_os_data/manifest.json'), Path('tests/test_release_consistency.py')]:
+              text = path.read_text()
+              assert '0.1.0-alpha.12.21' in text
+              path.write_text(text.replace('0.1.0-alpha.12.21', version, 1))
+          notes = Path('RELEASE_NOTES.md')
+          old = notes.read_text()
+          header = '''# GitHub Release\n\n**Tag:** `0.1.0-alpha.12.22`  \n**Release title:** Dummy OS Forecast 0.1.0-alpha.12.22 - Step 11 Meaningful Confidence Observer\n\n## Dummy OS Forecast 0.1.0-alpha.12.22\n\nDeze pre-release implementeert Stap 11 als strikt observer-only meaningful-confidencelaag. De productieconfidence en de productieforecast blijven ongewijzigd.\n\n### Nieuw\n- Nieuwe observer `sensor.do_energy_meaningful_confidence` met algoritme `meaningful_confidence_observer_v1`.\n- Kandidaatconfidence combineert recency-gewogen effectieve steekproefgrootte, historische stabiliteit/spreiding, historische coverage, fallback-/brondiepte en recente forward-looking forecastfout.\n- Productie- en kandidaatconfidence worden naast elkaar geëvalueerd in confidence-buckets en via high-versus-low confidence error-separatie.\n- Normal en Away blijven strikt gescheiden; niet-leerbare profielen worden observer-only als `inactive_profile` behandeld.\n- Historische records worden alleen gebruikt wanneer het kwartier volledig was afgerond op of vóór `forecast_captured_at`; recente foutinformatie gebruikt alleen eerdere evaluaties.\n\n### Bewijs- en veiligheidscontract\n- `observer_only = true`.\n- `forecast_influence_enabled = false`.\n- `production_confidence_unchanged = true`.\n- `promotion_ready = false`.\n- `live_shadow_required = true`.\n- Observing-basis: minimaal 32 geschikte evaluaties over minimaal 8 lokale dagen.\n- Candidate-supported-basis: minimaal 64 geschikte evaluaties over minimaal 14 lokale dagen én aantoonbaar lagere fout bij de hogere candidate-confidencegroep dan bij de lagere groep.\n- Een positieve replay of supported-status wijzigt nooit automatisch productieconfidence.\n\n### Ongewijzigd\n- Native architectuur: exact 15 minuten / 72 uur / 288 slots.\n- Productieforecast: `historical_baseline` modelversie `0.4`.\n- Productie-recency: 28 dagen half-life.\n- De bestaande productieconfidenceformules zijn niet gewijzigd.\n- Fallback Hierarchy, Peak Learning, Time Windows en Recency Weighting blijven observer-only.\n- Model Health is niet gewijzigd.\n- Weather, Solar, Prices en Degree Days zijn functioneel niet gewijzigd.\n- Dummy OS EMS, Package 41 en fysieke batterijbesturing zijn niet gewijzigd.\n- De eerder geconstateerde bredere friendly-name-afwijkingen zijn bewust uitgesteld tot de gezamenlijke naamopschoningsronde en blokkeren deze inhoudelijke route niet.\n\n### Live validatie na installatie\n- Controleren dat de Meaningful Confidence observer actief publiceert en geen productie-invloed heeft.\n- Controleren dat `production_confidence_unchanged = true`, `forecast_influence_enabled = false`, `promotion_ready = false` en `live_shadow_required = true` blijven.\n- Controleren dat productieforecast nog exact 288 slots op 15 minuten / 72 uur levert en dat bestaande confidence, Model Health en Package-41/EMS-route onaangetast blijven.\n- De observer vervolgens forward-looking/live evidence laten opbouwen; productiepromotie blijft een afzonderlijke latere beslissing.\n\n---\n\n## Historische release - Dummy OS Forecast 0.1.0-alpha.12.21\n\n'''
+          # Keep historical body, but avoid duplicating the old document-level title and first alpha12.21 heading metadata.
+          marker = '## Dummy OS Forecast 0.1.0-alpha.12.21'
+          idx = old.find(marker)
+          assert idx >= 0
+          historical = old[idx + len(marker):].lstrip('\n')
+          notes.write_text(header + historical)
+          PY
+      - name: Compile and test
+        run: |
+          python -m pip install --upgrade pytest
+          python -m compileall -q custom_components/dummy_os_data tests
+          python -m pytest -q
+          python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
+          grep -F 'VERSION = "0.1.0-alpha.12.22"' custom_components/dummy_os_data/const.py
+          grep -F '"version": "0.1.0-alpha.12.22"' custom_components/dummy_os_data/manifest.json
+          grep -F 'ALGORITHM_VERSION = "meaningful_confidence_observer_v1"' custom_components/dummy_os_data/meaningful_confidence.py
+          grep -F '"production_confidence_unchanged": True' custom_components/dummy_os_data/meaningful_confidence.py
+          grep -F '"forecast_influence_enabled": False' custom_components/dummy_os_data/meaningful_confidence.py
+      - name: Commit release metadata and remove workflow
+        run: |
+          rm .github/workflows/prepare-alpha12-22.yml
+          find custom_components tests -type d -name __pycache__ -prune -exec rm -rf {} +
+          find custom_components tests -type f -name '*.pyc' -delete
+          git config user.name "Stefan"
+          git config user.email "111599445+bliek79@users.noreply.github.com"
+          git add -A
+          git commit -m "Release alpha.12.22: Step 11 meaningful confidence observer"
+          git push origin HEAD:release-alpha12-22-step11-confidence
