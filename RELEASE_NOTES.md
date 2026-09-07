@@ -1,9 +1,49 @@
 # GitHub Release
 
-**Tag:** `0.1.0-alpha.12.21`  
-**Release title:** Dummy OS Forecast 0.1.0-alpha.12.21 - Step 10E Fallback Identity Hotfix
+**Tag:** `0.1.0-alpha.12.22`  
+**Release title:** Dummy OS Forecast 0.1.0-alpha.12.22 - Step 11 Meaningful Confidence Observer
 
-## Dummy OS Forecast 0.1.0-alpha.12.21
+## Dummy OS Forecast 0.1.0-alpha.12.22
+
+Deze pre-release implementeert Stap 11 als strikt observer-only meaningful-confidencelaag. De productieconfidence en de productieforecast blijven ongewijzigd.
+
+### Nieuw
+- Nieuwe observer `sensor.do_energy_meaningful_confidence` met algoritme `meaningful_confidence_observer_v1`.
+- Kandidaatconfidence combineert recency-gewogen effectieve steekproefgrootte, historische stabiliteit/spreiding, historische coverage, fallback-/brondiepte en recente forward-looking forecastfout.
+- Productie- en kandidaatconfidence worden naast elkaar geëvalueerd in confidence-buckets en via high-versus-low confidence error-separatie.
+- Normal en Away blijven strikt gescheiden; niet-leerbare profielen worden observer-only als `inactive_profile` behandeld.
+- Historische records worden alleen gebruikt wanneer het kwartier volledig was afgerond op of vóór `forecast_captured_at`; recente foutinformatie gebruikt alleen eerdere evaluaties.
+
+### Bewijs- en veiligheidscontract
+- `observer_only = true`.
+- `forecast_influence_enabled = false`.
+- `production_confidence_unchanged = true`.
+- `promotion_ready = false`.
+- `live_shadow_required = true`.
+- Observing-basis: minimaal 32 geschikte evaluaties over minimaal 8 lokale dagen.
+- Candidate-supported-basis: minimaal 64 geschikte evaluaties over minimaal 14 lokale dagen én aantoonbaar lagere fout bij de hogere candidate-confidencegroep dan bij de lagere groep.
+- Een positieve replay of supported-status wijzigt nooit automatisch productieconfidence.
+
+### Ongewijzigd
+- Native architectuur: exact 15 minuten / 72 uur / 288 slots.
+- Productieforecast: `historical_baseline` modelversie `0.4`.
+- Productie-recency: 28 dagen half-life.
+- De bestaande productieconfidenceformules zijn niet gewijzigd.
+- Fallback Hierarchy, Peak Learning, Time Windows en Recency Weighting blijven observer-only.
+- Model Health is niet gewijzigd.
+- Weather, Solar, Prices en Degree Days zijn functioneel niet gewijzigd.
+- Dummy OS EMS, Package 41 en fysieke batterijbesturing zijn niet gewijzigd.
+- De eerder geconstateerde bredere friendly-name-afwijkingen zijn bewust uitgesteld tot de gezamenlijke naamopschoningsronde en blokkeren deze inhoudelijke route niet.
+
+### Live validatie na installatie
+- Controleren dat de Meaningful Confidence observer actief publiceert en geen productie-invloed heeft.
+- Controleren dat `production_confidence_unchanged = true`, `forecast_influence_enabled = false`, `promotion_ready = false` en `live_shadow_required = true` blijven.
+- Controleren dat productieforecast nog exact 288 slots op 15 minuten / 72 uur levert en dat bestaande confidence, Model Health en Package-41/EMS-route onaangetast blijven.
+- De observer vervolgens forward-looking/live evidence laten opbouwen; productiepromotie blijft een afzonderlijke latere beslissing.
+
+---
+
+## Historische release - Dummy OS Forecast 0.1.0-alpha.12.21
 
 Deze pre-release is een gerichte Step 10E identity-hotfix. De live installatie van alpha.12.20 toonde dat Home Assistant de nieuwe fallback-observer registreerde als `sensor.dummy_os_forecast_do_energy_fallback_hierarchy` in plaats van de vooraf vastgelegde canonical entity-id `sensor.do_energy_fallback_hierarchy`.
 
