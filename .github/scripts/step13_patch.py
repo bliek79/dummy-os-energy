@@ -58,6 +58,8 @@ new_block = '''class DummyOSHomeForecastModelHealthSensor(DummyOSBaseSensor):
 
     @property
     def native_value(self) -> str:
+        if not self._profile_learnable:
+            return "profile_unclassified"
         return str(self._readiness()["readiness_status"])
 
     @property
