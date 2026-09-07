@@ -1,9 +1,49 @@
 # GitHub Release
 
+**Tag:** `0.1.0-alpha.12.21`  
+**Release title:** Dummy OS Forecast 0.1.0-alpha.12.21 - Step 10E Fallback Identity Hotfix
+
+## Dummy OS Forecast 0.1.0-alpha.12.21
+
+Deze pre-release is een gerichte Step 10E identity-hotfix. De live installatie van alpha.12.20 toonde dat Home Assistant de nieuwe fallback-observer registreerde als `sensor.dummy_os_forecast_do_energy_fallback_hierarchy` in plaats van de vooraf vastgelegde canonical entity-id `sensor.do_energy_fallback_hierarchy`.
+
+### Opgelost
+- De exact waargenomen automatisch gegenereerde alias `sensor.dummy_os_forecast_do_energy_fallback_hierarchy` is toegevoegd aan de veilige registry-migratielaag.
+- De bestaande registry-entry met unique_id `do_energy_fallback_hierarchy` wordt deterministisch in-place gemigreerd naar `sensor.do_energy_fallback_hierarchy`.
+- Er wordt geen tweede observer aangemaakt en een `_2`-variant is niet toegestaan als geaccepteerd resultaat.
+- `unique_id` en `suggested_object_id` blijven `do_energy_fallback_hierarchy`.
+- De runtime/friendly name blijft exact `DO Energy Fallback Hierarchy`.
+
+### Permanente borging
+- De Step 10 sensor-contracttest controleert nu niet alleen naam, unique_id en suggested_object_id, maar ook de exacte generated-prefix alias en de canonical registry-migratieroute.
+- De bestaande centrale identity-migratielaag wordt gebruikt, hetzelfde beschermingsprincipe als voor Time Windows en Recency Weighting.
+- De volledige regressietestset, manifestcontrole, Step 9 Profile Contract-gate en alpha.12.18 runtimegate moeten groen blijven vóór publicatie.
+- Voor nieuwe publieke `do_*`-entiteiten geldt voortaan naast het codecontract ook een expliciete registry-migratiegate en live controle van de exacte entity-id.
+
+### Ongewijzigd
+- Het fallback-algoritme `fallback_hierarchy_observer_v1` is niet gewijzigd.
+- De observer blijft strikt `observer_only = true` en `forecast_influence_enabled = false`.
+- `promotion_ready` blijft `false` en `live_shadow_required` blijft `true`.
+- Productieforecast blijft `historical_baseline` modelversie `0.4`.
+- Productie-recency blijft 28 dagen half-life.
+- Native architectuur blijft exact 15 minuten / 72 uur / 288 slots.
+- Forecast confidence, Model Health, Peak Learning, Time Windows en Recency Weighting veranderen niet.
+- Weather, Solar, Prices en Degree Days zijn functioneel niet gewijzigd.
+- Dummy OS EMS, Package 41 en fysieke batterijbesturing zijn niet gewijzigd.
+
+### Live validatie na installatie
+- Bevestigen dat exact `sensor.do_energy_fallback_hierarchy` bestaat.
+- Bevestigen dat `sensor.dummy_os_forecast_do_energy_fallback_hierarchy` niet meer als geregistreerde observer aanwezig is.
+- Bevestigen dat geen `sensor.do_energy_fallback_hierarchy_2` of ander duplicaat bestaat.
+- Bevestigen dat friendly name `DO Energy Fallback Hierarchy`, unique_id `do_energy_fallback_hierarchy`, `observer_only = true`, `forecast_influence_enabled = false`, `promotion_ready = false` en `live_shadow_required = true` intact zijn.
+- Tegelijk bevestigen dat de bestaande productieforecast, confidence, Model Health en Package-41/EMS-route onaangetast blijven.
+
+---
+
+## Historische release - Dummy OS Forecast 0.1.0-alpha.12.20
+
 **Tag:** `0.1.0-alpha.12.20`  
 **Release title:** Dummy OS Forecast 0.1.0-alpha.12.20 - Step 10D Fallback Hierarchy Observer
-
-## Dummy OS Forecast 0.1.0-alpha.12.20
 
 Deze pre-release implementeert Stap 10D van de Energy Forecast-route als strikt observer-only fallback-hiërarchie. De productieforecast blijft ongewijzigd op `historical_baseline` modelversie `0.4`, met dezelfde 28-daagse recency weighting en dezelfde native architectuur van 15 minuten / 72 uur / 288 slots.
 
