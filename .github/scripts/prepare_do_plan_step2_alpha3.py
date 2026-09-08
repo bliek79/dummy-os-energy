@@ -1,0 +1,199 @@
+from pathlib import Path
+
+sensor = Path('custom_components/dummy_os_data/sensor.py')
+text = sensor.read_text()
+text = text.replace(
+    'from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback\n',
+    'from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback\nfrom homeassistant.helpers.event import async_track_state_change_event\n',
+    1,
+)
+text = text.replace(
+    'from .do_plan_input import build_do_plan_input_72h\n',
+    'from .do_plan_input import build_do_plan_input_72h\nfrom .do_plan_energy_need import build_do_plan_energy_need\n',
+    1,
+)
+text = text.replace(
+    '            DummyOSPlanInput72hSensor(coordinator),\n',
+    '            DummyOSPlanInput72hSensor(coordinator),\n            DummyOSPlanEnergyNeedSensor(coordinator),\n',
+    1,
+)
+
+old = '''    def _result(self) -> dict[str, Any]:
+        now = dt_util.utcnow()
+        planner_hours = _build_planner_hours_result(self.coordinator, now=now)
+        model = HomeBaselineForecast(self.coordinator.records)
+        slots = model.build(self.coordinator.profile, now=now)
+        contract = build_forecast_planner_contract(
+            planner_hours=planner_hours,
+            model_health=_build_model_health_result(self.coordinator, slots),
+        )
+        return build_do_plan_input_72h(
+            contract=contract,
+            solar_points=self.coordinator.solar.planner_points,
+            price_points=self.coordinator.prices.planner_points,
+            solar_status=self.coordinator.solar.source_status,
+            prices_status=self.coordinator.prices.status,
+            prices_freshness=self.coordinator.prices.freshness,
+        )
+'''
+new = '''    def _result(self) -> dict[str, Any]:
+        return _build_do_plan_input_result(self.coordinator)
+'''
+if old not in text:
+    raise SystemExit('DO Plan Input _result block not found')
+text = text.replace(old, new, 1)
+
+marker = '\n\nclass DummyOSPlanInput72hSensor(DummyOSBaseSensor):\n'
+helper = '''\n\ndef _build_do_plan_input_result(coordinator: DummyOSHomeDataCoordinator) -> dict[str, Any]:
+    """Build the shared observer-only 72-hour planner input matrix."""
+    now = dt_util.utcnow()
+    planner_hours = _build_planner_hours_result(coordinator, now=now)
+    model = HomeBaselineForecast(coordinator.records)
+    slots = model.build(coordinator.profile, now=now)
+    contract = build_forecast_planner_contract(
+        planner_hours=planner_hours,
+        model_health=_build_model_health_result(coordinator, slots),
+    )
+    return build_do_plan_input_72h(
+        contract=contract,
+        solar_points=coordinator.solar.planner_points,
+        price_points=coordinator.prices.planner_points,
+        solar_status=coordinator.solar.source_status,
+        prices_status=coordinator.prices.status,
+        prices_freshness=coordinator.prices.freshness,
+    )
+'''
+if marker not in text:
+    raise SystemExit('DO Plan Input class marker not found')
+text = text.replace(marker, helper + marker, 1)
+
+insertion_marker = '\n\nclass DummyOSHomeForecastNextQuarterSensor(DummyOSBaseSensor):\n'
+energy_class = '''\n\nclass DummyOSPlanEnergyNeedSensor(DummyOSBaseSensor):
+    """Observer-only battery energy need until usable solar returns."""
+
+    _attr_name = "DO Plan Energy Need"
+    _attr_unique_id = "do_plan_energy_need"
+    _attr_suggested_object_id = "do_plan_energy_need"
+    _attr_icon = "mdi:battery-clock-outline"
+
+    SOC_ENTITY = "sensor.anker_solix_solarbank_max_ac_185_soc"
+    BATTERY_CAPACITY_KWH = 7.2
+    MIN_SOC_PERCENT = 5.0
+    SAFETY_RESERVE_PERCENT = 7.0
+
+    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
+        super().__init__(coordinator)
+        self._remove_solar_listener = None
+        self._remove_prices_listener = None
+        self._remove_soc_listener = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._remove_solar_listener = self.coordinator.solar.async_add_listener(self._handle_update)
+        self._remove_prices_listener = self.coordinator.prices.async_add_listener(self._handle_update)
+        self._remove_soc_listener = async_track_state_change_event(
+            self.coordinator.hass,
+            [self.SOC_ENTITY],
+            self._handle_soc_update,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._remove_solar_listener is not None:
+            self._remove_solar_listener()
+        if self._remove_prices_listener is not None:
+            self._remove_prices_listener()
+        if self._remove_soc_listener is not None:
+            self._remove_soc_listener()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_soc_update(self, _event) -> None:
+        self.async_write_ha_state()
+
+    def _soc_percent(self) -> float | None:
+        state = self.coordinator.hass.states.get(self.SOC_ENTITY)
+        if state is None or state.state in {"unknown", "unavailable", "none", "None", ""}:
+            return None
+        try:
+            value = float(state.state)
+        except (TypeError, ValueError):
+            return None
+        return value if 0.0 <= value <= 100.0 else None
+
+    def _result(self) -> dict[str, Any]:
+        result = build_do_plan_energy_need(
+            input_result=_build_do_plan_input_result(self.coordinator),
+            soc_percent=self._soc_percent(),
+            battery_capacity_kwh=self.BATTERY_CAPACITY_KWH,
+            min_soc_percent=self.MIN_SOC_PERCENT,
+            safety_reserve_percent=self.SAFETY_RESERVE_PERCENT,
+            now=dt_util.utcnow(),
+        )
+        result["soc_source_entity"] = self.SOC_ENTITY
+        result["source_layer_status"] = "temporary_direct_soc_source_until_planner_source_contract"
+        return result
+
+    @property
+    def native_value(self) -> str:
+        return str(self._result()["status"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self._result())
+'''
+if insertion_marker not in text:
+    raise SystemExit('Energy Need insertion marker not found')
+text = text.replace(insertion_marker, energy_class + insertion_marker, 1)
+sensor.write_text(text)
+
+const = Path('custom_components/dummy_os_data/const.py')
+const.write_text(const.read_text().replace('VERSION = "0.2.0-alpha.2"', 'VERSION = "0.2.0-alpha.3"', 1))
+
+manifest = Path('custom_components/dummy_os_data/manifest.json')
+manifest.write_text(manifest.read_text().replace('"version": "0.2.0-alpha.2"', '"version": "0.2.0-alpha.3"', 1))
+
+tests = Path('tests/test_release_consistency.py')
+tests.write_text(tests.read_text().replace('VERSION = "0.2.0-alpha.2"', 'VERSION = "0.2.0-alpha.3"', 1))
+
+notes = Path('RELEASE_NOTES.md')
+old_notes = notes.read_text()
+current = '''# GitHub Release
+
+**Tag:** `0.2.0-alpha.3`  
+**Release title:** Dummy OS Energy 0.2.0-alpha.3 - DO Plan Energy Need
+
+## Dummy OS Energy 0.2.0-alpha.3
+
+Deze pre-release bouwt Planner Stap 2: de eerste observer-only energiebalans bovenop de live-gevalideerde `do_plan_input_72h`-matrix.
+
+### Nieuw
+- Nieuwe plannerdiagnose `do_plan_energy_need`.
+- Berekent netto energiebehoefte tot de eerste van twee opeenvolgende uren waarin solar minimaal het woningverbruik dekt.
+- Berekent beschikbare batterij-energie boven 5% minimum-SOC bij 7.2 kWh capaciteit.
+- Berekent een softwarematige veiligheidsreserve van 7%.
+- Leidt diagnostisch `additional_grid_charge_kwh` en `tradable_battery_kwh` af.
+- Neemt de `rows_signature` van Planner Stap 1 mee voor herleidbaarheid.
+
+### Verbeterd ten opzichte van huidige EMS
+- Missing solar wordt nooit als 0.0 behandeld.
+- NaN/inf/negatieve ongeldige forecastwaarden blokkeren in plaats van door te rekenen.
+- Geen bruikbare solargrens binnen 72 uur wordt expliciet `waiting_for_usable_solar`; de horizon wordt niet stilzwijgend als volledige nacht behandeld.
+- De rekenlaag gebruikt uitsluitend de gevalideerde `do_plan_input_72h`-architectuur.
+
+### Veiligheid
+- `shadow_only=true`.
+- `active_use_permitted=false`.
+- `physical_execution_authority=false`.
+- Geen Plan Store, Scheduler, Bridge, Safety of Execution wordt aangeroepen.
+- Dummy OS EMS blijft actief als referentie en rollback.
+- De planner entity-ID cleanup blijft bewust uitgesteld tot het einde van de plannerbouw.
+
+### Live-validatie
+- Controleer status/valid/reason, SOC-bron, energy_need_until_solar_kwh en first_usable_solar.
+- Vergelijk dezelfde timestamp met de huidige EMS Energy Need en verklaar eventuele verschillen.
+- Controleer dat alle drie veiligheidsvlaggen observer-only blijven.
+- Planner Stap 3 start pas na live acceptatie van deze stap.
+
+---
+'''
+notes.write_text(current + old_notes)
