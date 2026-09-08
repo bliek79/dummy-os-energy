@@ -1,5 +1,43 @@
 # GitHub Release
 
+**Tag:** `0.2.0-alpha.3`  
+**Release title:** Dummy OS Energy 0.2.0-alpha.3 - DO Plan Energy Need
+
+## Dummy OS Energy 0.2.0-alpha.3
+
+Deze pre-release bouwt Planner Stap 2: de eerste observer-only energiebalans bovenop de live-gevalideerde `do_plan_input_72h`-matrix.
+
+### Nieuw
+- Nieuwe plannerdiagnose `do_plan_energy_need`.
+- Berekent netto energiebehoefte tot de eerste van twee opeenvolgende uren waarin solar minimaal het woningverbruik dekt.
+- Berekent beschikbare batterij-energie boven 5% minimum-SOC bij 7.2 kWh capaciteit.
+- Berekent een softwarematige veiligheidsreserve van 7%.
+- Leidt diagnostisch `additional_grid_charge_kwh` en `tradable_battery_kwh` af.
+- Neemt de `rows_signature` van Planner Stap 1 mee voor herleidbaarheid.
+
+### Verbeterd ten opzichte van huidige EMS
+- Missing solar wordt nooit als 0.0 behandeld.
+- NaN/inf/negatieve ongeldige forecastwaarden blokkeren in plaats van door te rekenen.
+- Geen bruikbare solargrens binnen 72 uur wordt expliciet `waiting_for_usable_solar`; de horizon wordt niet stilzwijgend als volledige nacht behandeld.
+- De rekenlaag gebruikt uitsluitend de gevalideerde `do_plan_input_72h`-architectuur.
+
+### Veiligheid
+- `shadow_only=true`.
+- `active_use_permitted=false`.
+- `physical_execution_authority=false`.
+- Geen Plan Store, Scheduler, Bridge, Safety of Execution wordt aangeroepen.
+- Dummy OS EMS blijft actief als referentie en rollback.
+- De planner entity-ID cleanup blijft bewust uitgesteld tot het einde van de plannerbouw.
+
+### Live-validatie
+- Controleer status/valid/reason, SOC-bron, energy_need_until_solar_kwh en first_usable_solar.
+- Vergelijk dezelfde timestamp met de huidige EMS Energy Need en verklaar eventuele verschillen.
+- Controleer dat alle drie veiligheidsvlaggen observer-only blijven.
+- Planner Stap 3 start pas na live acceptatie van deze stap.
+
+---
+# GitHub Release
+
 **Tag:** `0.2.0-alpha.2`  
 **Release title:** Dummy OS Energy 0.2.0-alpha.2 - DO Plan Input 72h
 
