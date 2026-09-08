@@ -18,7 +18,7 @@ SOLAR_GENERATED_ENTITY_ID_ALIASES = MIGRATION_MODULE.SOLAR_GENERATED_ENTITY_ID_A
 DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES = MIGRATION_MODULE.DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES
 OBSOLETE_HOME_INPUT_ENTITY_ALIASES = MIGRATION_MODULE.OBSOLETE_HOME_INPUT_ENTITY_ALIASES
 
-VERSION = "0.1.0-alpha.12.26"
+VERSION = "0.2.0-alpha.1"
 
 EXPECTED_SOLAR_ENTITY_ID_ALIASES = {
     "do_solar_status": "sensor.dummy_os_solar_source_status",
@@ -101,11 +101,11 @@ class ReleaseConsistencyTests(unittest.TestCase):
         notes = (ROOT / "RELEASE_NOTES.md").read_text()
         self.assertEqual(manifest["version"], VERSION)
         self.assertEqual(manifest["domain"], "dummy_os_data")
-        self.assertEqual(manifest["name"], "Dummy OS Forecast")
-        self.assertIn('NAME = "Dummy OS Forecast"', const)
+        self.assertEqual(manifest["name"], "Dummy OS Energy")
+        self.assertIn('NAME = "Dummy OS Energy"', const)
         self.assertIn(f'VERSION = "{VERSION}"', const)
         self.assertIn(f"**Tag:** `{VERSION}`", notes)
-        self.assertIn(f"## Dummy OS Forecast {VERSION}", notes)
+        self.assertIn(f"## Dummy OS Energy {VERSION}", notes)
 
     def test_translation_key_sets_match(self) -> None:
         strings = json.loads((ROOT / "custom_components/dummy_os_data/strings.json").read_text())
@@ -117,8 +117,8 @@ class ReleaseConsistencyTests(unittest.TestCase):
         expected_config = set(strings["config"]["step"]["user"]["data"])
         self.assertEqual(expected_config, set(english["config"]["step"]["user"]["data"]))
         self.assertEqual(expected_config, set(dutch["config"]["step"]["user"]["data"]))
-        self.assertEqual(strings["config"]["step"]["user"]["title"], "Dummy OS Forecast")
-        self.assertEqual(dutch["options"]["step"]["init"]["title"], "Dummy OS Forecast-opties")
+        self.assertEqual(strings["config"]["step"]["user"]["title"], "Dummy OS Energy")
+        self.assertEqual(dutch["options"]["step"]["init"]["title"], "Dummy OS Energy-opties")
 
     def test_source_namespace_is_complete_and_canonical(self) -> None:
         sensor_source = (ROOT / "custom_components/dummy_os_data/home_input_sensor.py").read_text()

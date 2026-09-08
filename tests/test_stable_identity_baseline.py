@@ -1,4 +1,4 @@
-"""Integration-wide identity baseline gate for public Dummy OS Forecast entities."""
+"""Integration-wide identity baseline gate for public Dummy OS Energy entities."""
 
 from pathlib import Path
 
@@ -22,6 +22,6 @@ def test_public_entity_bases_use_full_name_semantics() -> None:
 
 
 def test_core_device_name_remains_integration_name() -> None:
-    """The central device can remain Dummy OS Forecast while entity names stay full names."""
+    """The central device can remain Dummy OS Energy while entity names stay full names."""
     const = _text("custom_components/dummy_os_data/const.py")
-    assert 'NAME = "Dummy OS Forecast"' in const
+    assert 'NAME = "Dummy OS Energy"' in const
