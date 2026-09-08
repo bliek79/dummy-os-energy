@@ -1,9 +1,9 @@
 {
   "domain": "dummy_os_data",
-  "name": "Dummy OS Forecast",
+  "name": "Dummy OS Energy",
   "codeowners": [],
   "config_flow": true,
-  "documentation": "https://github.com/bliek79/dummy-os-data",
+  "documentation": "https://github.com/bliek79/dummy-os-energy",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "requirements": [],
