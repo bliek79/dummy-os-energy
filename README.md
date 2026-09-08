@@ -1,42 +1,47 @@
-# Dummy OS Forecast
+# Dummy OS Energy
 
-Dummy OS Forecast is a custom Home Assistant integration that provides the source-normalization, history, forecast and validation layer for the wider Dummy OS energy-management architecture.
+Dummy OS Energy is a custom Home Assistant integration for the complete Dummy OS energy architecture. It started as the Dummy OS Forecast / Data layer and is now the permanent integration in which forecasting, planning, safety and later execution are built step by step.
 
-The integration is designed around one common time axis: native **15-minute resolution**, a rolling **72-hour horizon** and **288 forecast slots**. Individual modules collect or derive data independently and expose stable Home Assistant interfaces for dashboards, validation and future consumers such as Dummy OS EMS.
+The fixed time architecture remains native **15-minute resolution**, a rolling **72-hour horizon** and **288 forecast slots**. Existing forecast functionality remains intact while new planner functionality is added in parallel and validated against the current Dummy OS EMS before any legacy EMS function is retired.
 
 > **Project status:** early alpha / active development. Interfaces and behavior may still change until the project reaches a stable release.
 
 ## Purpose
 
-Dummy OS Forecast separates data collection and forecasting from physical energy control.
-
-Its role is to:
+Dummy OS Energy provides one controlled energy stack for Dummy OS:
 
 - normalize canonical source data;
-- retain useful historical observations;
+- retain historical observations;
 - generate Energy, Weather and Solar forecast data;
 - provide current and forecast price data;
 - collect and validate Degree Days / heat-history data;
 - evaluate forecast quality against actual measurements;
 - expose source quality and freshness;
-- provide stable timeline interfaces for dashboards and future planning logic.
+- provide the stable Forecast-to-Planner contract;
+- build the new planner inside this integration under the `do_plan_*` namespace;
+- add safety and execution only after the corresponding planner layers have been validated.
 
-Dummy OS EMS is intentionally a separate layer. EMS should consume normalized data and forecasts from Dummy OS Forecast rather than duplicate source-specific logic.
+The current Dummy OS EMS remains separate during migration as a reference, comparison source and rollback path. It is not merged into Dummy OS Energy. Functionality is rebuilt and validated inside Dummy OS Energy and the old EMS can only be retired step by step after proven replacement.
 
 ## Core architecture
 
-The fixed architecture is:
+The permanent architecture is:
 
-- **15-minute native resolution**
-- **rolling 72-hour horizon**
-- **288 forecast slots**
-- stable entity IDs and unique IDs
-- source-quality and freshness monitoring
-- forecast evaluation before model factors are promoted into production use
-- separate `normal` and `away` Energy Forecast histories
-- market prices separated from tariff composition
-- import and export tariffs modeled independently for 2027 compatibility
-- tariff profiles are versionable and historical tariff snapshots must remain immutable
+`Source / Data -> Forecast -> Contract -> Planner -> Safety -> Execution`
+
+Core rules:
+
+- **15-minute native resolution**;
+- **rolling 72-hour horizon**;
+- **288 forecast slots**;
+- no second forecast architecture;
+- missing, `unknown` or `unavailable` values are never silently converted to zero;
+- stable entity IDs and unique IDs unless a controlled migration explicitly requires otherwise;
+- strict separation between normal and away forecast profiles;
+- source-quality and freshness monitoring;
+- planner logic consumes normalized forecast contracts instead of duplicating source logic;
+- physical execution authority never belongs to the forecast layer;
+- planner, safety and execution are introduced independently and validated before activation.
 
 The public entity namespaces are organized by function:
 
@@ -46,16 +51,31 @@ The public entity namespaces are organized by function:
 - `do_solar_*`
 - `do_prices_*`
 - `do_degree_days_*`
+- `do_plan_*` for all new planner entities
 
-The visible integration name is **Dummy OS Forecast**. The technical Home Assistant domain remains `dummy_os_data`.
+The visible integration name is **Dummy OS Energy**. The technical Home Assistant domain deliberately remains `dummy_os_data` to preserve the existing installation, config entry, entity registry and current `do_*` entities.
+
+## Migration model
+
+Dummy OS Energy is not created by merging repositories later. The existing Forecast integration is the permanent base and is extended in place.
+
+Migration principles:
+
+1. existing Forecast/Data functionality remains leading for source and forecast layers;
+2. new planner capabilities are built in parallel under `do_plan_*`;
+3. every new planner function is observer/shadow first;
+4. results are compared with the current Dummy OS EMS where applicable;
+5. safety is connected only after planner behavior is validated;
+6. execution is connected only after safety and final revalidation are proven;
+7. the old Dummy OS EMS remains available as reference and rollback until its replacement is live proven.
 
 ## Current functionality
 
 ### Source layer
 
-Dummy OS Forecast builds one canonical local energy-flow layer from four configurable underlying power sources. Grid power uses one bidirectional source: positive means import and negative means export. Missing, `unknown` or `unavailable` source values are not silently converted to zero.
+Dummy OS Energy builds one canonical local energy-flow layer from configurable underlying power sources. Grid power uses one bidirectional source: positive means import and negative means export. Missing, `unknown` or `unavailable` source values are not silently converted to zero.
 
-Registered Source entities:
+Registered Source entities include:
 
 - `sensor.do_source_grid_net_power`
 - `sensor.do_source_grid_import_power`
@@ -73,9 +93,9 @@ Registered Source entities:
 
 Energy Forecast consumes `sensor.do_source_home_power` as its canonical actual-power source.
 
-It provides completed 15-minute energy observations, persistent history, separate `normal` and `away` profiles, a rolling 72-hour / 288-slot forecast, recency-weighted historical baseline modelling, weekday/weekend fallback logic and forecast-versus-actual evaluation.
+It provides completed 15-minute energy observations, persistent history, separate `normal` and `away` profiles, a rolling 72-hour / 288-slot forecast, recency-weighted historical baseline modelling, fallback logic and forecast-versus-actual evaluation.
 
-Registered Energy entities:
+Important entities include:
 
 - `sensor.do_energy_actual_quarter`
 - `sensor.do_energy_history_status`
@@ -91,238 +111,86 @@ Registered Energy entities:
 - `sensor.do_energy_forecast_mae`
 - `sensor.do_energy_forecast_bias`
 - `sensor.do_energy_forecast_evaluation_samples`
+- `sensor.do_energy_forecast_planner_contract`
 - `select.do_energy_profile`
 
 ### Weather Forecast
 
-The Weather module fetches forecast data directly from Open-Meteo and normalizes it into the Dummy OS 15-minute forecast architecture.
-
-Current behavior includes current observations, 15-minute forecast data, a rolling 72-hour timeline, seven-day daily source summary, hourly refresh with retry/backoff, source-status monitoring and preservation of the last successful dataset when a later fetch fails.
-
-Current configured source location:
-
-- latitude: `51.828981`
-- longitude: `4.839871`
-- timezone: `Europe/Berlin`
-- Open-Meteo model selection: `best_match`
-
-Registered Weather entities:
-
-- `sensor.do_weather_temperature`
-- `sensor.do_weather_apparent_temperature`
-- `sensor.do_weather_relative_humidity`
-- `sensor.do_weather_precipitation`
-- `sensor.do_weather_cloud_cover`
-- `sensor.do_weather_wind_speed`
-- `sensor.do_weather_wind_direction`
-- `sensor.do_weather_wind_gusts`
-- `sensor.do_weather_weather_code`
-- `sensor.do_weather_forecast_timeline`
-- `sensor.do_weather_source_status`
-- `sensor.do_weather_source_freshness`
-- `sensor.do_weather_last_update`
-- `sensor.do_weather_model`
+The Weather module fetches forecast data from Open-Meteo and normalizes it into the common 15-minute / 72-hour architecture. It exposes current observations, normalized forecast timelines, source status, freshness and model information.
 
 ### Solar Forecast
 
-The native Solar module uses two independent Open-Meteo `global_tilted_irradiance` requests and converts radiation forecast data into 15-minute PV energy for the north and south roof planes. It publishes a rolling 72-hour / 288-slot timeline for north, south and total. Radiation timestamps are shifted to slot start because Open-Meteo radiation is a backward interval average.
-
-Default installation parameters:
-
-- location: `51.828981, 4.839871`
-- north: 2.96 kWp DC, 2.45 kW AC, 37 degrees, Open-Meteo azimuth 180 degrees, factor 0.90
-- south: 1.48 kWp DC, 1.23 kW AC, 37 degrees, Open-Meteo azimuth 0 degrees, factor 0.90
-- actual total AC: `sensor.sb3_6_1av_41_857_pv_power`
-- actual north DC input: `sensor.sb3_6_1av_41_857_pv_power_a`
-- actual south DC input: `sensor.sb3_6_1av_41_857_pv_power_b`
-
-The north/south actual AC-equivalent split uses total inverter AC power in the same ratio as SMA inputs A and B. For each full quarter, Dummy OS freezes the forecast before actual production is known and integrates SMA power with a zero-order hold. A component is valid only with at least 90% time coverage; missing source data is not treated as zero. The module remains observation/shadow only.
-
-Registered Solar entities:
-
-- `sensor.do_solar_status`
-- `sensor.do_solar_forecast_timeline`
-- `sensor.do_solar_forecast_today_north`
-- `sensor.do_solar_forecast_today_south`
-- `sensor.do_solar_forecast_today_total`
-- `sensor.do_solar_forecast_tomorrow_north`
-- `sensor.do_solar_forecast_tomorrow_south`
-- `sensor.do_solar_forecast_tomorrow_total`
-- `sensor.do_solar_forecast_next_quarter`
-- `sensor.do_solar_actual_power_north`
-- `sensor.do_solar_actual_power_south`
-- `sensor.do_solar_actual_power_total`
-- `sensor.do_solar_evaluation_last_completed_quarter`
-- `sensor.do_solar_evaluation_horizon_1h`
-- `sensor.do_solar_evaluation_horizon_6h`
-- `sensor.do_solar_evaluation_horizon_24h`
-- `sensor.do_solar_evaluation_horizon_48h`
-- `sensor.do_solar_evaluation_horizon_72h`
-- `sensor.do_solar_model`
+The Solar module converts Open-Meteo radiation data into separate north/south and combined PV forecasts on the common 15-minute / 72-hour timeline. Actual production and forecast snapshots are evaluated independently; missing source data is never treated as zero.
 
 ### Prices
 
-The Prices layer is observation-only. It does not perform physical control and does not replace EMS execution logic.
-
-Electricity:
-
-- known market prices: `https://stroomvoorspeller.nl/data/prices.json`
-- native known source: `prices_15m[]` when `has_pt15m` is true
-- hourly `prices[]` remains a fallback and is expanded to four 15-minute slots
-- forecast source: `https://stroomvoorspeller.nl/data/forecast.json`
-- hourly forecast values are expanded to four 15-minute slots while retaining their source resolution
-- known prices take precedence over forecast values for overlapping timestamps
-- raw EPEX values are normalized from EUR/MWh to EUR/kWh
-- Dummy OS calculates its own import/export all-in prices from configurable tariff components
-
-Gas:
-
-- current gas market price is read from the configured EnergyZero Home Assistant sensor
-- default source entity: `sensor.energyzero_today_gas_current_hour_price`
-- gas is treated as a daily price and can later be projected onto the common 15-minute time axis
-- Dummy OS adds the configured gas supplier component and energy tax internally
-
-Current Prices runtime states:
-
-- `sensor.do_prices_status`
-- `sensor.do_prices_market_current`
-- `sensor.do_prices_import_current`
-- `sensor.do_prices_export_current`
-- `sensor.do_prices_timeline`
-- `sensor.do_prices_tariff_profile`
-- `sensor.do_prices_gas_market`
-- `sensor.do_prices_gas_all_in`
-
-Prices remains a runtime-state layer in alpha.12 and is not included in the registered entity count below.
+The Prices layer provides market, import and export price information while keeping market price and tariff composition separate. Known quarter-hour prices are preferred where available; hourly values can be projected to the common 15-minute axis while preserving source resolution metadata. Import and export tariffs remain independently configurable for 2027 compatibility.
 
 ### Degree Days
 
-Degree Days collects hourly Open-Meteo actual temperatures, freezes one completed record per local day and retains up to 400 days of internal history. A day requires at least 18 valid hourly samples. The base temperature is 18.0 °C. Seasonal weighting remains aligned with the existing legacy weighting: 1.1 for November-February, 1.0 for March/October and 0.8 for the other months.
+Degree Days collects and freezes completed daily weather-derived records and exposes current, weighted and reference degree-day information while retaining internal history.
 
-From alpha.12 the layer is published through normal registered Home Assistant `SensorEntity` entities:
+### Planner
 
-- `sensor.do_degree_days_status`
-- `sensor.do_degree_days_history_days`
-- `sensor.do_degree_days_temperature_daily`
-- `sensor.do_degree_days_daily`
-- `sensor.do_degree_days_weighted_daily`
-- `sensor.do_degree_days_reference_daily`
-- `sensor.do_degree_days_weighted_reference_daily`
-- `sensor.do_degree_days_difference`
-- `sensor.do_degree_days_weighted_difference`
-- `sensor.do_degree_days_last_day`
+Planner development starts inside Dummy OS Energy under the dedicated `do_plan_*` namespace.
 
-## Registered entity inventory in alpha.12
+The planner must consume the validated Forecast contract and is initially observer/shadow only. The native Forecast architecture remains 15 minutes / 72 hours / 288 slots; planner projections may aggregate to hourly planning views where explicitly defined, but they do not create a second forecast architecture.
 
-After a successful migration, Dummy OS Forecast is intended to expose **65 registered entities**:
-
-- Source: 7 sensors
-- Energy: 14 sensors + 1 select
-- Weather: 14 sensors
-- Solar: 19 sensors
-- Degree Days: 10 sensors
-
-Total: **64 sensors + 1 select**.
-
-Prices runtime states are separate from this entity-registry count.
+No `do_plan_*` entity may obtain physical execution authority merely by being planner-ready. Safety and execution remain later, separately guarded layers.
 
 ## Installation
 
-Dummy OS Forecast is currently intended for Home Assistant installations using custom integrations.
+Dummy OS Energy is intended for Home Assistant installations using custom integrations.
 
-Typical installation methods during alpha development are:
+Typical alpha installation methods are:
 
 1. install through HACS as a custom repository; or
 2. copy `custom_components/dummy_os_data` into the Home Assistant `custom_components` directory.
 
-After installation, restart Home Assistant and add **Dummy OS Forecast** through **Settings > Devices & services**.
+After installation, restart Home Assistant and add **Dummy OS Energy** through **Settings > Devices & services**.
 
-Because the project is still in alpha, review the release notes before updating.
+The repository is:
 
-## Configuration
+`bliek79/dummy-os-energy`
 
-The Source layer is built from four configurable underlying power sources. Energy Forecast then consumes `sensor.do_source_home_power` internally.
+The technical integration directory and domain remain:
 
-The active Energy Forecast profile can be selected through `select.do_energy_profile`.
+`custom_components/dummy_os_data`
 
-Prices tariff components are configured under the Dummy OS Forecast integration options. Price components should be entered on the basis indicated by the option name. The current alpha uses inclusive-VAT supplier/tax components and applies the configured VAT percentage to the raw EPEX market component.
+`dummy_os_data`
 
-Solar source entities, roof geometry, capacity limits and performance factors are also configurable through the integration options. Solar azimuth values use the Open-Meteo convention: 0 degrees is south and +/-180 degrees is north.
+## Configuration and Recorder behavior
 
-## Data and Recorder behavior
+The Source layer is built from configurable underlying power sources. Energy Forecast consumes the canonical source layer internally. The active Energy Forecast profile is selected through `select.do_energy_profile`.
 
-Dummy OS Forecast distinguishes between operational state and large timeline payloads.
-
-Compact states and useful metadata can be recorded normally by Home Assistant. Large timeline attributes should be excluded from Recorder. Energy, Weather and Solar use formal Recorder-safe entity attributes; the Prices timeline remains a validation/shadow state with a large live `points` attribute and should be excluded while its formal Recorder-safe interface is not yet finalized.
-
-Energy Forecast historical observations and evaluation data are persisted internally by the integration. Degree Days also keeps its own internal stored history.
+Compact states and useful metadata can be recorded normally by Home Assistant. Large timeline attributes should remain excluded from Recorder where applicable. Persistent Energy and Degree Days histories remain managed by the integration.
 
 ## Forecast evaluation
 
-Forecast quality is treated as a first-class part of the architecture.
-
-Energy Forecast evaluates forecast snapshots against completed actual 15-minute observations. Solar evaluates completed quarter forecasts and also supports persisted 1h, 6h, 24h, 48h and 72h horizon snapshots/evaluations. Future Prices evaluation can compare the forecast available at decision time with the later known market price.
+Forecast quality remains a first-class part of the architecture. Forecast snapshots are compared with completed actual observations. Inter-source comparison between a legacy forecast and Dummy OS Energy is migration diagnostics and must not be confused with forecast error versus actual measurements.
 
 ## Sources and attribution
 
-Dummy OS Forecast uses external projects, documentation and data providers. External sources remain traceable in the repository and should not be introduced without documenting their purpose and applicable terms.
+Dummy OS Energy uses external projects, documentation and data providers including Home Assistant, Open-Meteo, Stroomvoorspeller.nl and EnergyZero. External sources remain traceable in the repository and their applicable terms and attribution must be preserved.
 
-### Home Assistant
+Stroomvoorspeller data is used under **CC BY 4.0**; attribution to Stroomvoorspeller.nl must be retained.
 
-- Project: https://www.home-assistant.io/
-- Developer documentation: https://developers.home-assistant.io/
-- Used for: integration framework, entity model, configuration entries, Recorder interfaces and runtime platform APIs.
-
-Home Assistant is a separate project. Dummy OS Forecast is not affiliated with or endorsed by the Home Assistant project or Nabu Casa.
-
-### Open-Meteo
-
-- Project: https://open-meteo.com/
-- Forecast API documentation: https://open-meteo.com/en/docs
-- Used for: current weather, 15-minute weather forecast, daily summaries, wind, precipitation, humidity and solar-radiation inputs.
-
-Dummy OS Forecast transforms and normalizes Open-Meteo source data into its own rolling 72-hour / 15-minute architecture. Open-Meteo data remains subject to the licensing, attribution and usage conditions published by Open-Meteo.
-
-### Stroomvoorspeller.nl
-
-- Project: https://stroomvoorspeller.nl/
-- Integration documentation: https://stroomvoorspeller.nl/integraties
-- Known electricity price feed: https://stroomvoorspeller.nl/data/prices.json
-- Forecast feed: https://stroomvoorspeller.nl/data/forecast.json
-- Used for: Dutch EPEX day-ahead market prices and multi-day electricity price forecasts.
-- Licence/attribution: Stroomvoorspeller data is used under **CC BY 4.0**; attribution to Stroomvoorspeller.nl must be retained.
-
-Dummy OS Forecast uses market/forecast data as source material and calculates its own import/export tariff composition. The indicative consumer all-in calculations published by Stroomvoorspeller are not used as the authoritative Dummy OS tariff.
-
-### EnergyZero
-
-- Project: https://www.energyzero.nl/
-- Used for: current daily gas market price through the Home Assistant EnergyZero integration.
-
-EnergyZero is used as an actual/reference source for gas. Supplier-specific tariff components remain separate inside Dummy OS Forecast.
+Dummy OS Energy is an independent open-source community project and is not affiliated with, sponsored by or endorsed by Home Assistant, Nabu Casa, Open-Meteo, Stroomvoorspeller.nl, EnergyZero, Anker Innovations or other third-party providers mentioned in the project documentation.
 
 ## Roadmap
 
-Planned development areas include:
+Current direction:
 
-- continued Energy/Solar/Weather/Prices/Degree Days validation;
-- immutable price/tariff history and actual import/export cost records;
-- Solar daily aggregation, calibration and benchmark history;
-- heat-demand and gas forecast models;
-- gas/TTF forecast evaluation;
-- broader forecast-quality diagnostics;
-- stable interfaces for Dummy OS EMS.
+- maintain and validate the existing Source, Energy, Weather, Solar, Prices and Degree Days layers;
+- keep the validated Forecast-to-Planner contract as the boundary between forecast and planning;
+- build the new `do_plan_*` planner step by step inside Dummy OS Energy;
+- compare planner behavior with the current Dummy OS EMS;
+- add safety only after planner validation;
+- add execution only after safety and final-revalidation validation;
+- retire old EMS functionality only after the equivalent Dummy OS Energy path has been proven live.
 
 ## Releases and change history
 
 Version-specific changes are documented in GitHub Releases and `RELEASE_NOTES.md`.
 
 Alpha and beta versions should be treated as pre-releases until a stable release is explicitly published.
-
-## Independence and disclaimer
-
-Dummy OS Forecast is an independent open-source community project.
-
-It is not affiliated with, sponsored by or endorsed by Home Assistant, Nabu Casa, Open-Meteo, Stroomvoorspeller.nl, EnergyZero, Anker Innovations or other third-party providers mentioned in the project documentation.
-
-The software is provided for experimentation and Home Assistant automation/data purposes. Users remain responsible for reviewing configuration, source terms, data quality and any actions performed by systems that consume Dummy OS Forecast.
