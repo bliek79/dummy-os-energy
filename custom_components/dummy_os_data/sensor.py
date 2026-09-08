@@ -37,6 +37,7 @@ from .forecast import HomeBaselineForecast
 from .horizon_quality import calculate_horizon_quality
 from .model_health import calculate_model_health_readiness
 from .forecast_planner_contract import build_forecast_planner_contract
+from .do_plan_input import build_do_plan_input_72h
 from .planner_hours import (
     aggregate_planner_hours,
     required_generated_slot_count,
@@ -72,6 +73,7 @@ async def async_setup_entry(
             DummyOSHomeForecastTimelineSensor(coordinator),
             DummyOSEnergyForecastPlannerHoursSensor(coordinator),
             DummyOSEnergyForecastPlannerContractSensor(coordinator),
+            DummyOSPlanInput72hSensor(coordinator),
             DummyOSHomeForecastNextQuarterSensor(coordinator),
             DummyOSHomeForecastCoverageSensor(coordinator),
             DummyOSHomeForecastConfidenceSensor(coordinator),
@@ -397,6 +399,59 @@ class DummyOSEnergyForecastPlannerContractSensor(DummyOSBaseSensor):
         return build_forecast_planner_contract(
             planner_hours=planner_hours,
             model_health=model_health,
+        )
+
+    @property
+    def native_value(self) -> str:
+        return str(self._result()["status"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self._result())
+
+
+class DummyOSPlanInput72hSensor(DummyOSBaseSensor):
+    """Observer-only exact 72-hour input matrix for the new internal planner."""
+
+    _attr_name = "DO Plan Input 72h"
+    _attr_unique_id = "do_plan_input_72h"
+    _attr_suggested_object_id = "do_plan_input_72h"
+    _attr_icon = "mdi:table-clock"
+    _unrecorded_attributes = frozenset({"rows"})
+
+    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
+        super().__init__(coordinator)
+        self._remove_solar_listener = None
+        self._remove_prices_listener = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._remove_solar_listener = self.coordinator.solar.async_add_listener(self._handle_update)
+        self._remove_prices_listener = self.coordinator.prices.async_add_listener(self._handle_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._remove_solar_listener is not None:
+            self._remove_solar_listener()
+        if self._remove_prices_listener is not None:
+            self._remove_prices_listener()
+        await super().async_will_remove_from_hass()
+
+    def _result(self) -> dict[str, Any]:
+        now = dt_util.utcnow()
+        planner_hours = _build_planner_hours_result(self.coordinator, now=now)
+        model = HomeBaselineForecast(self.coordinator.records)
+        slots = model.build(self.coordinator.profile, now=now)
+        contract = build_forecast_planner_contract(
+            planner_hours=planner_hours,
+            model_health=_build_model_health_result(self.coordinator, slots),
+        )
+        return build_do_plan_input_72h(
+            contract=contract,
+            solar_points=self.coordinator.solar.planner_points,
+            price_points=self.coordinator.prices.planner_points,
+            solar_status=self.coordinator.solar.source_status,
+            prices_status=self.coordinator.prices.status,
+            prices_freshness=self.coordinator.prices.freshness,
         )
 
     @property

@@ -84,6 +84,7 @@ class DummyOSPricesCoordinator:
         self.listeners: list[callback] = []
         self._unsubs: list[Any] = []
         self.points: list[PricePoint] = []
+        self._planner_points: list[PricePoint] = []
         self.last_update: datetime | None = None
         self.source_generated_at: str | None = None
         self.forecast_generated_at: str | None = None
@@ -274,6 +275,11 @@ class DummyOSPricesCoordinator:
         now_local = dt_util.as_local(dt_util.utcnow())
         current_quarter = now_local.replace(minute=(now_local.minute // 15) * 15, second=0, microsecond=0)
         end = current_quarter + timedelta(minutes=FORECAST_SLOTS * QUARTER_MINUTES)
+        self._planner_points = [
+            merged[t]
+            for t in sorted(merged)
+            if dt_util.as_local(t) >= current_quarter
+        ][: FORECAST_SLOTS + 4]
         timeline = [merged[t] for t in sorted(merged) if current_quarter <= dt_util.as_local(t) < end][:FORECAST_SLOTS]
         point = self._find_current_point(timeline)
         self.current_source = point.kind if point is not None else "missing"
@@ -306,6 +312,11 @@ class DummyOSPricesCoordinator:
     @property
     def current_point(self) -> PricePoint | None:
         return self._find_current_point(self.points)
+
+    @property
+    def planner_points(self) -> list[PricePoint]:
+        """Return the already-normalized internal buffer for exact planner-hour joins."""
+        return list(self._planner_points)
 
     def _publish_states(self) -> None:
         point = self.current_point

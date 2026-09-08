@@ -145,6 +145,11 @@ class DummyOSSolarCoordinator:
         return [point for point in self._source_points if point.start >= cutoff][:FORECAST_SLOTS]
 
     @property
+    def planner_points(self) -> list[SolarPoint]:
+        """Return the already-fetched source buffer for exact planner-hour joins."""
+        return list(self._source_points)
+
+    @property
     def source_point_count(self) -> int:
         """Return raw aligned points retained for rolling-window continuity."""
         return len(self._source_points)
