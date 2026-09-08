@@ -85,3 +85,5 @@ jobs:
             Dummy_OS_Energy_0.2.0-alpha.1_HA_install.zip
             SHA256SUMS-0.2.0-alpha.1.txt
             RELEASE_NOTES.md
+
+# Release-gate repair trigger.
