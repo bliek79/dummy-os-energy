@@ -95,8 +95,11 @@ def test_no_usable_solar_does_not_assume_end_of_horizon() -> None:
 
 def test_current_hour_is_fractional_when_present() -> None:
     start = datetime(2026, 9, 9, 0, 0, tzinfo=timezone.utc)
+    inp = _input(start=start, usable_at=2, home=1.0)
+    inp["rows"][2]["solar_kwh"] = 1.2
+    inp["rows"][3]["solar_kwh"] = 1.2
     result = MOD.build_do_plan_energy_need(
-        input_result=_input(start=start, usable_at=2, home=1.0),
+        input_result=inp,
         soc_percent=50.0,
         now=start + timedelta(minutes=30),
     )
