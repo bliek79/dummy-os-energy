@@ -36,6 +36,9 @@ jobs:
           python -m pytest -q
           python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
           python -m json.tool hacs.json >/dev/null
+          python -m json.tool custom_components/dummy_os_data/strings.json >/dev/null
+          python -m json.tool custom_components/dummy_os_data/translations/en.json >/dev/null
+          python -m json.tool custom_components/dummy_os_data/translations/nl.json >/dev/null
       - name: Verify migration release invariants
         run: |
           grep -F 'DOMAIN = "dummy_os_data"' custom_components/dummy_os_data/const.py
@@ -45,61 +48,23 @@ jobs:
           grep -F '"version": "0.2.0-alpha.1"' custom_components/dummy_os_data/manifest.json
           grep -F '"documentation": "https://github.com/bliek79/dummy-os-energy"' custom_components/dummy_os_data/manifest.json
           grep -F '"name": "Dummy OS Energy"' hacs.json
+          grep -F '"title": "Dummy OS Energy"' custom_components/dummy_os_data/strings.json
+          grep -F '**Tag:** `0.2.0-alpha.1`' RELEASE_NOTES.md
+          grep -F '## Dummy OS Energy 0.2.0-alpha.1' RELEASE_NOTES.md
           grep -F 'do_plan_' README.md
           grep -F 'dummy_os_data' README.md
           grep -F '15-minute' README.md
           grep -F '288' README.md
           test -z "$(git ls-files | grep -E '(__pycache__|\.pyc$)' || true)"
-      - name: Prepare release notes and record history
+      - name: Prepare GitHub release notes
         run: |
-          cat > /tmp/release-notes.md <<'EOF'
-          # Dummy OS Energy 0.2.0-alpha.1
-
-          Deze pre-release start de nieuwe Dummy OS Energy-ontwikkellijn. De bestaande Forecast-integratie wordt voortaan rechtstreeks uitgebouwd tot de definitieve energie-integratie; er komt geen latere samenvoeging met Dummy OS EMS.
-
-          ## Gewijzigd
-          - Productnaam gewijzigd naar **Dummy OS Energy**.
-          - GitHub-repository is `bliek79/dummy-os-energy`.
-          - HACS-weergavenaam is **Dummy OS Energy**.
-          - Manifest-documentatie verwijst naar de nieuwe repository.
-          - Runtime `NAME` is **Dummy OS Energy**.
-          - Versielijn start op `0.2.0-alpha.1`.
-          - Architectuurdocumentatie legt vast dat de nieuwe planner in deze integratie wordt gebouwd.
-          - Nieuwe planner-entiteiten krijgen de vaste namespace `do_plan_*`.
-
-          ## Bewust ongewijzigd
-          - Home Assistant-domain blijft `dummy_os_data`.
-          - Integratiemap blijft `custom_components/dummy_os_data`.
-          - Bestaande `do_*` entity_id's en unique_id's worden niet hernoemd.
-          - Native forecastarchitectuur blijft 15 minuten / 72 uur / 288 publieke slots.
-          - Er is geen nieuwe planner-, safety- of executionlogica toegevoegd in deze release.
-          - Dummy OS EMS blijft voorlopig apart actief als referentie en rollback tijdens de stapsgewijze vervanging.
-
-          ## Live-validatie na installatie
-          - Controleer dat HACS/Home Assistant de integratie als **Dummy OS Energy** toont.
-          - Controleer dat de bestaande config entry en opties behouden zijn.
-          - Controleer dat bestaande `do_*`-entiteiten dezelfde entity_id/unique_id behouden en geen duplicaten ontstaan.
-          - Controleer dat de Forecast-timeline nog exact 288 slots op 15 minuten / 72 uur levert.
-          - Start pas na deze validatie met de eerste `do_plan_*`-plannerlaag.
-          EOF
-          {
-            echo '# GitHub Release'
-            echo
-            echo '**Tag:** `0.2.0-alpha.1`  '
-            echo '**Release title:** Dummy OS Energy 0.2.0-alpha.1 - Product Migration Foundation'
-            echo
-            cat /tmp/release-notes.md
-            echo
-            echo '---'
-            echo
-            cat RELEASE_NOTES.md
-          } > /tmp/RELEASE_NOTES.md
-          mv /tmp/RELEASE_NOTES.md RELEASE_NOTES.md
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add RELEASE_NOTES.md
-          git commit -m 'Record Dummy OS Energy 0.2.0-alpha.1 release notes'
-          git push origin HEAD:main
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('RELEASE_NOTES.md').read_text(encoding='utf-8')
+          marker = '\n---\n'
+          current = text.split(marker, 1)[0].strip() + '\n'
+          Path('/tmp/release-notes.md').write_text(current, encoding='utf-8')
+          PY
       - name: Build package
         run: |
           RELEASE_COMMIT="$(git rev-parse HEAD)"
