@@ -1,5 +1,41 @@
 # GitHub Release
 
+**Tag:** `0.2.0-alpha.1`  
+**Release title:** Dummy OS Energy 0.2.0-alpha.1 - Product Migration Foundation
+
+## Dummy OS Energy 0.2.0-alpha.1
+
+Deze pre-release start de nieuwe Dummy OS Energy-ontwikkellijn. De bestaande Forecast-integratie wordt voortaan rechtstreeks uitgebouwd tot de definitieve energie-integratie; er komt geen latere samenvoeging met Dummy OS EMS.
+
+### Gewijzigd
+- Productnaam gewijzigd naar **Dummy OS Energy**.
+- GitHub-repository is `bliek79/dummy-os-energy`.
+- HACS-weergavenaam is **Dummy OS Energy**.
+- Manifest-documentatie verwijst naar de nieuwe repository.
+- Runtime `NAME` is **Dummy OS Energy**.
+- Versielijn start op `0.2.0-alpha.1`.
+- Config-flow en vertalingen tonen voortaan **Dummy OS Energy**.
+- Architectuurdocumentatie legt vast dat de nieuwe planner in deze integratie wordt gebouwd.
+- Nieuwe planner-entiteiten krijgen de vaste namespace `do_plan_*`.
+
+### Bewust ongewijzigd
+- Home Assistant-domain blijft `dummy_os_data`.
+- Integratiemap blijft `custom_components/dummy_os_data`.
+- Bestaande `do_*` entity_id's en unique_id's worden niet hernoemd.
+- Native forecastarchitectuur blijft 15 minuten / 72 uur / 288 publieke slots.
+- Er is geen nieuwe planner-, safety- of executionlogica toegevoegd in deze release.
+- Dummy OS EMS blijft voorlopig apart actief als referentie en rollback tijdens de stapsgewijze vervanging.
+
+### Live-validatie na installatie
+- Controleer dat HACS/Home Assistant de integratie als **Dummy OS Energy** toont.
+- Controleer dat de bestaande config entry en opties behouden zijn.
+- Controleer dat bestaande `do_*`-entiteiten dezelfde entity_id/unique_id behouden en geen duplicaten ontstaan.
+- Controleer dat de Forecast-timeline nog exact 288 slots op 15 minuten / 72 uur levert.
+- Start pas na deze validatie met de eerste `do_plan_*`-plannerlaag.
+
+---
+# GitHub Release
+
 **Tag:** `0.1.0-alpha.12.26`  
 **Release title:** Dummy OS Forecast 0.1.0-alpha.12.26 - Step 15 Stable Forecast to Planner Contract
 
