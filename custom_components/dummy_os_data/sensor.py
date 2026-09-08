@@ -11,6 +11,7 @@ from homeassistant.const import PERCENTAGE, UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -38,6 +39,7 @@ from .horizon_quality import calculate_horizon_quality
 from .model_health import calculate_model_health_readiness
 from .forecast_planner_contract import build_forecast_planner_contract
 from .do_plan_input import build_do_plan_input_72h
+from .do_plan_energy_need import build_do_plan_energy_need
 from .planner_hours import (
     aggregate_planner_hours,
     required_generated_slot_count,
@@ -74,6 +76,7 @@ async def async_setup_entry(
             DummyOSEnergyForecastPlannerHoursSensor(coordinator),
             DummyOSEnergyForecastPlannerContractSensor(coordinator),
             DummyOSPlanInput72hSensor(coordinator),
+            DummyOSPlanEnergyNeedSensor(coordinator),
             DummyOSHomeForecastNextQuarterSensor(coordinator),
             DummyOSHomeForecastCoverageSensor(coordinator),
             DummyOSHomeForecastConfidenceSensor(coordinator),
@@ -410,6 +413,26 @@ class DummyOSEnergyForecastPlannerContractSensor(DummyOSBaseSensor):
         return dict(self._result())
 
 
+def _build_do_plan_input_result(coordinator: DummyOSHomeDataCoordinator) -> dict[str, Any]:
+    """Build the shared observer-only 72-hour planner input matrix."""
+    now = dt_util.utcnow()
+    planner_hours = _build_planner_hours_result(coordinator, now=now)
+    model = HomeBaselineForecast(coordinator.records)
+    slots = model.build(coordinator.profile, now=now)
+    contract = build_forecast_planner_contract(
+        planner_hours=planner_hours,
+        model_health=_build_model_health_result(coordinator, slots),
+    )
+    return build_do_plan_input_72h(
+        contract=contract,
+        solar_points=coordinator.solar.planner_points,
+        price_points=coordinator.prices.planner_points,
+        solar_status=coordinator.solar.source_status,
+        prices_status=coordinator.prices.status,
+        prices_freshness=coordinator.prices.freshness,
+    )
+
+
 class DummyOSPlanInput72hSensor(DummyOSBaseSensor):
     """Observer-only exact 72-hour input matrix for the new internal planner."""
 
@@ -437,22 +460,81 @@ class DummyOSPlanInput72hSensor(DummyOSBaseSensor):
         await super().async_will_remove_from_hass()
 
     def _result(self) -> dict[str, Any]:
-        now = dt_util.utcnow()
-        planner_hours = _build_planner_hours_result(self.coordinator, now=now)
-        model = HomeBaselineForecast(self.coordinator.records)
-        slots = model.build(self.coordinator.profile, now=now)
-        contract = build_forecast_planner_contract(
-            planner_hours=planner_hours,
-            model_health=_build_model_health_result(self.coordinator, slots),
+        return _build_do_plan_input_result(self.coordinator)
+
+    @property
+    def native_value(self) -> str:
+        return str(self._result()["status"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self._result())
+
+
+class DummyOSPlanEnergyNeedSensor(DummyOSBaseSensor):
+    """Observer-only battery energy need until usable solar returns."""
+
+    _attr_name = "DO Plan Energy Need"
+    _attr_unique_id = "do_plan_energy_need"
+    _attr_suggested_object_id = "do_plan_energy_need"
+    _attr_icon = "mdi:battery-clock-outline"
+
+    SOC_ENTITY = "sensor.anker_solix_solarbank_max_ac_185_soc"
+    BATTERY_CAPACITY_KWH = 7.2
+    MIN_SOC_PERCENT = 5.0
+    SAFETY_RESERVE_PERCENT = 7.0
+
+    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
+        super().__init__(coordinator)
+        self._remove_solar_listener = None
+        self._remove_prices_listener = None
+        self._remove_soc_listener = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._remove_solar_listener = self.coordinator.solar.async_add_listener(self._handle_update)
+        self._remove_prices_listener = self.coordinator.prices.async_add_listener(self._handle_update)
+        self._remove_soc_listener = async_track_state_change_event(
+            self.coordinator.hass,
+            [self.SOC_ENTITY],
+            self._handle_soc_update,
         )
-        return build_do_plan_input_72h(
-            contract=contract,
-            solar_points=self.coordinator.solar.planner_points,
-            price_points=self.coordinator.prices.planner_points,
-            solar_status=self.coordinator.solar.source_status,
-            prices_status=self.coordinator.prices.status,
-            prices_freshness=self.coordinator.prices.freshness,
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._remove_solar_listener is not None:
+            self._remove_solar_listener()
+        if self._remove_prices_listener is not None:
+            self._remove_prices_listener()
+        if self._remove_soc_listener is not None:
+            self._remove_soc_listener()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_soc_update(self, _event) -> None:
+        self.async_write_ha_state()
+
+    def _soc_percent(self) -> float | None:
+        state = self.coordinator.hass.states.get(self.SOC_ENTITY)
+        if state is None or state.state in {"unknown", "unavailable", "none", "None", ""}:
+            return None
+        try:
+            value = float(state.state)
+        except (TypeError, ValueError):
+            return None
+        return value if 0.0 <= value <= 100.0 else None
+
+    def _result(self) -> dict[str, Any]:
+        result = build_do_plan_energy_need(
+            input_result=_build_do_plan_input_result(self.coordinator),
+            soc_percent=self._soc_percent(),
+            battery_capacity_kwh=self.BATTERY_CAPACITY_KWH,
+            min_soc_percent=self.MIN_SOC_PERCENT,
+            safety_reserve_percent=self.SAFETY_RESERVE_PERCENT,
+            now=dt_util.utcnow(),
         )
+        result["soc_source_entity"] = self.SOC_ENTITY
+        result["source_layer_status"] = "temporary_direct_soc_source_until_planner_source_contract"
+        return result
 
     @property
     def native_value(self) -> str:
