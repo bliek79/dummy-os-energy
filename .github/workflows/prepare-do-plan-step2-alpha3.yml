@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/prepare-do-plan-step2-alpha3.yml
       - .github/scripts/prepare_do_plan_step2_alpha3.py
+      - tests/test_do_plan_energy_need.py
 
 permissions:
   contents: write
