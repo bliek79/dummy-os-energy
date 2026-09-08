@@ -6,6 +6,10 @@ The fixed time architecture remains native **15-minute resolution**, a rolling *
 
 > **Project status:** early alpha / active development. Interfaces and behavior may still change until the project reaches a stable release.
 
+## DO Plan - observer-only planner foundation
+
+Vanaf `0.2.0-alpha.2` bouwt Dummy OS Energy de nieuwe planner intern onder de vaste `do_plan_*` namespace. De eerste laag is `sensor.do_plan_input_72h`: een read-only 72-uurs matrix die Home Forecast, Solar en import-/exportprijzen exact op tijd koppelt. Deze laag neemt geen laad-/ontlaadbeslissingen en heeft geen fysieke uitvoeringsbevoegdheid.
+
 ## Purpose
 
 Dummy OS Energy provides one controlled energy stack for Dummy OS:

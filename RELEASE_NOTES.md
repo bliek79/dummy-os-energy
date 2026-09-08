@@ -1,5 +1,39 @@
 # GitHub Release
 
+**Tag:** `0.2.0-alpha.2`  
+**Release title:** Dummy OS Energy 0.2.0-alpha.2 - DO Plan Input 72h
+
+## Dummy OS Energy 0.2.0-alpha.2
+
+Deze pre-release bouwt Planner Stap 1: één observer-only, exact tijdgematchte 72-uurs invoermatrix voor de nieuwe interne Dummy OS Energy-planner.
+
+### Nieuw
+- Nieuwe diagnose-entiteit `sensor.do_plan_input_72h`.
+- Exact 72 contracturen als leidende tijdas.
+- Woningverbruik rechtstreeks uit het Forecast→Planner-contract.
+- Solar en import-/exportprijzen uitsluitend via exact gematchte kwartierstimestamps.
+- Vier echte kwartieren per planneruur vereist; geen nearest-match, interpolatie of padding.
+- `0.0` blijft een geldige echte waarde; missing/NaN/inf wordt nooit stilzwijgend nul.
+- Interne read-only bronbuffers voor Solar en Prices zodat de 72 volledige contracturen kunnen worden afgedekt zonder de publieke 288-slot timelines te verlengen.
+- Compacte SHA-256 `rows_signature` voor parallelvalidatie.
+
+### Veiligheid
+- `shadow_only=true`.
+- `active_use_permitted=false`.
+- `physical_execution_authority=false`.
+- Geen plan store, Scheduler, safety-chain of batterijservice wordt aangeroepen.
+- Dummy OS EMS blijft actief en ongewijzigd als referentie en rollback.
+
+### Live-validatie
+- `sensor.do_plan_input_72h` moet 72 uurankers hebben die exact overeenkomen met het Forecast→Planner-contract.
+- `valid_home_hours`, `valid_solar_hours` en `valid_price_hours` worden afzonderlijk gecontroleerd.
+- Bij volledige brondekking moet `fully_valid_hours=72` zijn.
+- Een runtime bronstoring mag structurele geldigheid niet maskeren en resulteert in `runtime_blocked`.
+- Planner Stap 2 (`do_plan_energy_need`) start pas na expliciete live-validatie van deze inputlaag.
+
+---
+# GitHub Release
+
 **Tag:** `0.2.0-alpha.1`  
 **Release title:** Dummy OS Energy 0.2.0-alpha.1 - Product Migration Foundation
 
