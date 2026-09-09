@@ -202,6 +202,33 @@ def build_do_plan_input_72h(
             for index in range(QUARTERS_PER_HOUR)
         ]
 
+        home_quarters: list[dict[str, Any]] = []
+        raw_home_quarters = hour.get("quarters")
+        home_quarters_valid = isinstance(raw_home_quarters, list) and len(raw_home_quarters) == QUARTERS_PER_HOUR
+        if home_quarters_valid:
+            for quarter_index, quarter_start in enumerate(quarter_starts):
+                quarter = raw_home_quarters[quarter_index]
+                q_start = _aware_utc(quarter.get("start")) if isinstance(quarter, dict) else None
+                q_end = _aware_utc(quarter.get("end")) if isinstance(quarter, dict) else None
+                q_energy = _finite(quarter.get("energy_kwh"), non_negative=True) if isinstance(quarter, dict) else None
+                valid = q_start == quarter_start and q_end == quarter_start + timedelta(minutes=NATIVE_RESOLUTION_MINUTES) and q_energy is not None
+                if not valid:
+                    home_quarters_valid = False
+                home_quarters.append({
+                    "start": quarter_start.isoformat(),
+                    "end": (quarter_start + timedelta(minutes=NATIVE_RESOLUTION_MINUTES)).isoformat(),
+                    "kwh": q_energy if valid else None,
+                })
+        else:
+            home_quarters = [
+                {
+                    "start": quarter_start.isoformat(),
+                    "end": (quarter_start + timedelta(minutes=NATIVE_RESOLUTION_MINUTES)).isoformat(),
+                    "kwh": None,
+                }
+                for quarter_start in quarter_starts
+            ]
+
         solar_values: list[float] = []
         solar_quarters: list[dict[str, Any]] = []
         for quarter_start in quarter_starts:
@@ -263,6 +290,8 @@ def build_do_plan_input_72h(
                 "import_price": import_price,
                 "export_price": export_price,
                 "home_valid": home_valid,
+                "home_quarters_valid": home_quarters_valid,
+                "home_quarters": home_quarters,
                 "solar_valid": solar_valid,
                 "price_valid": price_valid,
                 "fully_valid": fully_valid,

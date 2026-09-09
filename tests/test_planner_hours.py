@@ -46,6 +46,8 @@ def test_alignment_offsets_and_exact_72_hours():
         last = datetime.fromisoformat(result["planner_end"])
         assert last - first == timedelta(hours=72)
         assert all(hour["quarter_count"] == 4 for hour in result["hours"])
+        assert all(len(hour["quarters"]) == 4 for hour in result["hours"])
+        assert result["hours"][0]["quarters"][0]["energy_kwh"] == 0.1
 
 def test_missing_quarter_never_becomes_partial_sum():
     start = datetime(2026, 9, 7, 16, 0, tzinfo=timezone.utc)
