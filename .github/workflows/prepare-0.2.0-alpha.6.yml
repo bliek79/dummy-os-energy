@@ -22,12 +22,12 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import base64
           import json
 
           version = '0.2.0-alpha.6'
           const_path = Path('custom_components/dummy_os_data/const.py')
-          text = const_path.read_text()
-          text = text.replace('VERSION = "0.2.0-alpha.5"', f'VERSION = "{version}"', 1)
+          text = const_path.read_text().replace('VERSION = "0.2.0-alpha.5"', f'VERSION = "{version}"', 1)
           const_path.write_text(text)
 
           manifest_path = Path('custom_components/dummy_os_data/manifest.json')
@@ -36,49 +36,14 @@ jobs:
           manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
 
           test_path = Path('tests/test_release_consistency.py')
-          text = test_path.read_text()
-          text = text.replace('VERSION = "0.2.0-alpha.5"', f'VERSION = "{version}"', 1)
+          text = test_path.read_text().replace('VERSION = "0.2.0-alpha.5"', f'VERSION = "{version}"', 1)
           test_path.write_text(text)
 
-          notes = '''# GitHub Release
-
-**Tag:** `0.2.0-alpha.6`  
-**Release title:** Dummy OS Energy 0.2.0-alpha.6 - Pre-Step-5 Health Fix
-
-## Dummy OS Energy 0.2.0-alpha.6
-
-Deze pre-release publiceert de reeds gemergede pre-Step-5 health-fix. Er wordt geen nieuwe plannerfunctionaliteit toegevoegd.
-
-### Opgelost
-- Herstelt de startupfout waarbij `sensor.do_energy_history_status` en `sensor.do_energy_forecast_model` konden falen met `NameError: name 'slot_count' is not defined`.
-- Verplaatst de `slot_count`-validatie naar `HomeBaselineForecast.build(...)`, waar `slot_count` daadwerkelijk beschikbaar is.
-- Verplaatst de zware observerberekeningen voor Fallback Hierarchy, Meaningful Confidence en Recency Weighting van de Home Assistant main thread naar executor-backed achtergrondberekening.
-- Cachet de voltooide observerresultaten zodat `native_value` en `extra_state_attributes` de zware analyse niet telkens synchroon opnieuw uitvoeren.
-- Maakt snapshots van records, evaluations en profiel vóór executorwerk en voegt overlappende refreshes samen.
-- Tijdens de eerste achtergrondberekening kan tijdelijk `initializing` met blocker `observer_calculation_pending` worden gepubliceerd.
-
-### Bewust ongewijzigd
-- native forecastarchitectuur blijft 15 minuten / 72 uur / 288 slots;
-- plannerprojectie en Planner Stap 1 t/m 4 blijven functioneel ongewijzigd;
-- geen nieuwe plannerbeslislogica;
-- `shadow_only=true`, `active_use_permitted=false` en `physical_execution_authority=false` blijven leidend;
-- de planner entity-ID cleanup blijft uitgesteld tot het einde van de plannerbouw;
-- de dubbele Home Assistant Solar-validatieautomation-ID `1788072577846` valt buiten deze release.
-
-### Live-validatie na installatie
-Na installatie en volledige Home Assistant-herstart moet worden bevestigd dat:
-- `sensor.do_energy_history_status` en `sensor.do_energy_forecast_model` zonder `NameError` laden;
-- de eerdere main-threadwaarschuwingen voor Fallback Hierarchy (~15 s), Meaningful Confidence (~9 s) en Recency Weighting (~6 s) niet terugkomen;
-- de bestaande plannerketen tot en met `do_plan_preview` correct blijft functioneren;
-- er geen fysieke uitvoeringsautoriteit is ontstaan.
-
-Planner Stap 5 blijft geparkeerd totdat deze health-fix live is gevalideerd.
-'''
+          notes_b64 = 'IyBHaXRIdWIgUmVsZWFzZQoKKipUYWc6KiogYDAuMi4wLWFscGhhLjZgICAKKipSZWxlYXNlIHRpdGxlOioqIER1bW15IE9TIEVuZXJneSAwLjIuMC1hbHBoYS42IC0gUHJlLVN0ZXAtNSBIZWFsdGggRml4CgojIyBEdW1teSBPUyBFbmVyZ3kgMC4yLjAtYWxwaGEuNgoKRGV6ZSBwcmUtcmVsZWFzZSBwdWJsaWNlZXJ0IGRlIHJlZWRzIGdlbWVyZ2VkZSBwcmUtU3RlcC01IGhlYWx0aC1maXguIEVyIHdvcmR0IGdlZW4gbmlldXdlIHBsYW5uZXJmdW5jdGlvbmFsaXRlaXQgdG9lZ2V2b2VnZC4KCiMjIyBPcGdlbG9zdAotIEhlcnN0ZWx0IGRlIHN0YXJ0dXBmb3V0IHdhYXJiaWogYHNlbnNvci5kb19lbmVyZ3lfaGlzdG9yeV9zdGF0dXNgIGVuIGBzZW5zb3IuZG9fZW5lcmd5X2ZvcmVjYXN0X21vZGVsYCBrb25kZW4gZmFsZW4gbWV0IGBOYW1lRXJyb3I6IG5hbWUgJ3Nsb3RfY291bnQnIGlzIG5vdCBkZWZpbmVkYC4KLSBWZXJwbGFhdHN0IGRlIGBzbG90X2NvdW50YC12YWxpZGF0aWUgbmFhciBgSG9tZUJhc2VsaW5lRm9yZWNhc3QuYnVpbGQoLi4uKWAsIHdhYXIgYHNsb3RfY291bnRgIGRhYWR3ZXJrZWxpamsgYmVzY2hpa2JhYXIgaXMuCi0gVmVycGxhYXRzdCBkZSB6d2FyZSBvYnNlcnZlcmJlcmVrZW5pbmdlbiB2b29yIEZhbGxiYWNrIEhpZXJhcmNoeSwgTWVhbmluZ2Z1bCBDb25maWRlbmNlIGVuIFJlY2VuY3kgV2VpZ2h0aW5nIHZhbiBkZSBIb21lIEFzc2lzdGFudCBtYWluIHRocmVhZCBuYWFyIGV4ZWN1dG9yLWJhY2tlZCBhY2h0ZXJncm9uZGJlcmVrZW5pbmcuCi0gQ2FjaGV0IGRlIHZvbHRvb2lkZSBvYnNlcnZlcnJlc3VsdGF0ZW4gem9kYXQgYG5hdGl2ZV92YWx1ZWAgZW4gYGV4dHJhX3N0YXRlX2F0dHJpYnV0ZXNgIGRlIHp3YXJlIGFuYWx5c2UgbmlldCB0ZWxrZW5zIHN5bmNocm9vbiBvcG5pZXV3IHVpdHZvZXJlbi4KLSBNYWFrdCBzbmFwc2hvdHMgdmFuIHJlY29yZHMsIGV2YWx1YXRpb25zIGVuIHByb2ZpZWwgdm9vciBleGVjdXRvcndlcmsgZW4gdm9lZ3Qgb3ZlcmxhcHBlbmRlIHJlZnJlc2hlcyBzYW1lbi4KLSBUaWpkZW5zIGRlIGVlcnN0ZSBhY2h0ZXJncm9uZGJlcmVrZW5pbmcga2FuIHRpamRlbGlqayBgaW5pdGlhbGl6aW5nYCBtZXQgYmxvY2tlciBgb2JzZXJ2ZXJfY2FsY3VsYXRpb25fcGVuZGluZ2Agd29yZGVuIGdlcHVibGljZWVyZC4KCiMjIyBCZXd1c3Qgb25nZXdpanppZ2QKLSBuYXRpdmUgZm9yZWNhc3RhcmNoaXRlY3R1dXIgYmxpamZ0IDE1IG1pbnV0ZW4gLyA3MiB1dXIgLyAyODggc2xvdHM7Ci0gcGxhbm5lcnByb2plY3RpZSBlbiBQbGFubmVyIFN0YXAgMSB0L20gNCBibGlqdmVuIGZ1bmN0aW9uZWVsIG9uZ2V3aWp6aWdkOwotIGdlZW4gbmlldXdlIHBsYW5uZXJiZXNsaXNsb2dpY2E7Ci0gYHNoYWRvd19vbmx5PXRydWVgLCBgYWN0aXZlX3VzZV9wZXJtaXR0ZWQ9ZmFsc2VgIGVuIGBwaHlzaWNhbF9leGVjdXRpb25fYXV0aG9yaXR5PWZhbHNlYCBibGlqdmVuIGxlaWRlbmQ7Ci0gZGUgcGxhbm5lciBlbnRpdHktSUQgY2xlYW51cCBibGlqZnQgdWl0Z2VzdGVsZCB0b3QgaGV0IGVpbmRlIHZhbiBkZSBwbGFubmVyYm91dzsKLSBkZSBkdWJiZWxlIEhvbWUgQXNzaXN0YW50IFNvbGFyLXZhbGlkYXRpZWF1dG9tYXRpZS1JRCBgMTc4ODA3MjU3Nzg0NmAgdmFsdCBidWl0ZW4gZGV6ZSByZWxlYXNlLgoKIyMjIExpdmUtdmFsaWRhdGllIG5hIGluc3RhbGxhdGllCk5hIGluc3RhbGxhdGllIGVuIHZvbGxlZGlnZSBIb21lIEFzc2lzdGFudC1oZXJzdGFydCBtb2V0IHdvcmRlbiBiZXZlc3RpZ2QgZGF0OgotIGBzZW5zb3IuZG9fZW5lcmd5X2hpc3Rvcnlfc3RhdHVzYCBlbiBgc2Vuc29yLmRvX2VuZXJneV9mb3JlY2FzdF9tb2RlbGAgem9uZGVyIGBOYW1lRXJyb3JgIGxhZGVuOwotIGRlIGVlcmRlcmUgbWFpbi10aHJlYWR3YWFyc2NodXdpbmdlbiB2b29yIEZhbGxiYWNrIEhpZXJhcmNoeSAofjE1IHMpLCBNZWFuaW5nZnVsIENvbmZpZGVuY2UgKH45IHMpIGVuIFJlY2VuY3kgV2VpZ2h0aW5nICh+NiBzKSBuaWV0IHRlcnVna29tZW47Ci0gZGUgYmVzdGFhbmRlIHBsYW5uZXJrZXRlbiB0b3QgZW4gbWV0IGBkb19wbGFuX3ByZXZpZXdgIGNvcnJlY3QgYmxpamZ0IGZ1bmN0aW9uZXJlbjsKLSBlciBnZWVuIGZ5c2lla2UgdWl0dm9lcmluZ3NhdXRvcml0ZWl0IGlzIG9udHN0YWFuLgoKUGxhbm5lciBTdGFwIDUgYmxpamZ0IGdlcGFya2VlcmQgdG90ZGF0IGRlemUgaGVhbHRoLWZpeCBsaXZlIGlzIGdldmFsaWRlZXJkLgo='
+          notes = base64.b64decode(notes_b64).decode('utf-8')
           Path('RELEASE_NOTES_0.2.0-alpha.6.md').write_text(notes)
-
           history_path = Path('RELEASE_NOTES.md')
-          old = history_path.read_text()
-          history_path.write_text(notes + '\n---\n' + old)
+          history_path.write_text(notes + '\n---\n' + history_path.read_text())
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
