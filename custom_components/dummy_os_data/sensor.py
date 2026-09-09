@@ -43,6 +43,7 @@ from .do_plan_input import build_do_plan_input_72h
 from .do_plan_energy_need import build_do_plan_energy_need
 from .do_plan_reserve_soc import build_do_plan_reserve_soc
 from .do_plan_preview_sensor import build_do_plan_preview_sensors
+from .do_plan_72h_sensor import build_do_plan_72h_sensors
 from .planner_hours import (
     aggregate_planner_hours,
     required_generated_slot_count,
@@ -82,6 +83,7 @@ async def async_setup_entry(
             DummyOSPlanEnergyNeedSensor(coordinator),
             DummyOSPlanReserveSOCSensor(coordinator),
             *build_do_plan_preview_sensors(coordinator),
+            *build_do_plan_72h_sensors(coordinator),
             DummyOSHomeForecastNextQuarterSensor(coordinator),
             DummyOSHomeForecastCoverageSensor(coordinator),
             DummyOSHomeForecastConfidenceSensor(coordinator),
