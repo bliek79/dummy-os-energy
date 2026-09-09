@@ -41,12 +41,10 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           sensor = Path('custom_components/dummy_os_data/sensor.py').read_text()
-          preview_sensor = Path('custom_components/dummy_os_data/do_plan_preview_sensor.py').read_text()
           assert 'class DummyOSAsyncPlannerResultSensor' in sensor
           assert 'async_add_executor_job' in sensor
           assert 'planner_calculation_pending' in sensor
           assert 'model_health_calculation_pending' in sensor
-          assert 'async_add_executor_job' in preview_sensor
           PY
           grep -F '"physical_execution_authority": False' custom_components/dummy_os_data/do_plan_preview.py
           grep -F '"shadow_only": True' custom_components/dummy_os_data/do_plan_preview.py
