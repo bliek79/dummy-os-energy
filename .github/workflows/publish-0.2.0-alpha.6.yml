@@ -18,6 +18,7 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       PYTHONPYCACHEPREFIX: /tmp/dummy-os-pycache
       VERSION: 0.2.0-alpha.6
+      RELEASE_TAG_COMMIT: e8489f91ba3ea83d25828fde5646260f754b3d52
       ZIP_NAME: Dummy_OS_Energy_0.2.0-alpha.6_HA_install.zip
       CHECKSUM_NAME: SHA256SUMS-0.2.0-alpha.6.txt
       RELEASE_TITLE: Dummy OS Energy 0.2.0-alpha.6 - Pre-Step-5 Health Fix
@@ -58,19 +59,23 @@ jobs:
           grep -F '"shadow_only": True' custom_components/dummy_os_data/do_plan_preview.py
           grep -F '"active_use_permitted": False' custom_components/dummy_os_data/do_plan_preview.py
           test -z "$(git ls-files | grep -E '(__pycache__|\.pyc$)' || true)"
+      - name: Verify existing release tag
+        run: |
+          git fetch --tags --force
+          TAG_COMMIT="$(git rev-list -n 1 "$VERSION")"
+          test "$TAG_COMMIT" = "$RELEASE_TAG_COMMIT"
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release already exists; refusing duplicate publication."
+            exit 1
+          fi
       - name: Build package
         run: |
-          RELEASE_COMMIT="$(git rev-parse HEAD)"
-          echo "RELEASE_COMMIT=$RELEASE_COMMIT" >> "$GITHUB_ENV"
           zip -r "$ZIP_NAME" custom_components/dummy_os_data -x '*/__pycache__/*' '*.pyc'
           sha256sum "$ZIP_NAME" > "$CHECKSUM_NAME"
           cat "$CHECKSUM_NAME"
-      - name: Create tag and pre-release
+      - name: Create pre-release from existing tag
         run: |
-          if gh release view "$VERSION" >/dev/null 2>&1; then exit 1; fi
-          git tag "$VERSION" "$RELEASE_COMMIT"
-          git push origin "$VERSION"
-          gh release create "$VERSION" "$ZIP_NAME" "$CHECKSUM_NAME" --target "$RELEASE_COMMIT" --title "$RELEASE_TITLE" --notes-file RELEASE_NOTES_0.2.0-alpha.6.md --prerelease
+          gh release create "$VERSION" "$ZIP_NAME" "$CHECKSUM_NAME" --verify-tag --title "$RELEASE_TITLE" --notes-file RELEASE_NOTES_0.2.0-alpha.6.md --prerelease
       - uses: actions/upload-artifact@v4
         with:
           name: dummy-os-energy-0.2.0-alpha.6-published-assets
