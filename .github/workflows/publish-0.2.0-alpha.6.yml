@@ -1,5 +1,6 @@
 name: Publish Dummy OS Energy 0.2.0-alpha.6
 
+# One-shot publisher for the explicitly approved pre-Step-5 health-fix release.
 on:
   push:
     branches:
