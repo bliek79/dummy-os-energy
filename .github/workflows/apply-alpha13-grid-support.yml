@@ -1,0 +1,49 @@
+name: Apply Planner Step 5 Grid Support Shadow
+
+on:
+  push:
+    branches:
+      - planner-step5-grid-support-shadow
+    paths:
+      - .github/workflows/apply-alpha13-grid-support.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPYCACHEPREFIX: /tmp/dummy-os-pycache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: planner-step5-grid-support-shadow
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pytest
+      - name: Apply grid support implementation
+        run: python .github/scripts/apply_alpha13_grid_support.py
+      - name: Validate alpha.13
+        run: |
+          python -m compileall -q custom_components/dummy_os_data tests
+          python -m pytest -q
+          python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
+          grep -F 'VERSION = "0.2.0-alpha.13"' custom_components/dummy_os_data/const.py
+          grep -F '"version": "0.2.0-alpha.13"' custom_components/dummy_os_data/manifest.json
+          grep -F '_attr_unique_id = "do_plan_grid_support"' custom_components/dummy_os_data/do_plan_grid_support_sensor.py
+          grep -F "'physical_execution_authority':False" custom_components/dummy_os_data/do_plan_grid_support.py
+          grep -F "'service_calls_performed':False" custom_components/dummy_os_data/do_plan_grid_support.py
+          test -z "$(git ls-files | grep -E '(__pycache__|\.pyc$)' || true)"
+      - name: Commit implementation
+        run: |
+          rm .github/workflows/apply-alpha13-grid-support.yml
+          rm .github/scripts/apply_alpha13_grid_support.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Implement observer-only Planner Step 5 grid support"
+          git push origin HEAD:planner-step5-grid-support-shadow
