@@ -1,0 +1,205 @@
+from pathlib import Path
+import json
+
+
+def replace_class(text: str, start: str, end: str, replacement: str) -> str:
+    a = text.find(start)
+    if a < 0:
+        raise SystemExit(f"missing class start: {start}")
+    b = text.find(end, a)
+    if b < 0:
+        raise SystemExit(f"missing class end: {end}")
+    return text[:a] + replacement + text[b:]
+
+
+sensor_path = Path("custom_components/dummy_os_data/sensor.py")
+sensor = sensor_path.read_text()
+
+coverage = '''class DummyOSHomeForecastCoverageSensor(DummyOSAsyncPlannerResultSensor):
+    _attr_name = "DO Energy Forecast Coverage"
+    _attr_unique_id = "do_energy_forecast_coverage"
+    _attr_suggested_object_id = "do_energy_forecast_coverage"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_icon = "mdi:chart-donut"
+
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        slots = _build_public_forecast_from_snapshot(snapshot)
+        sources: dict[str, int] = {}
+        for slot in slots:
+            sources[slot.source] = sources.get(slot.source, 0) + 1
+        populated = sum(1 for slot in slots if slot.energy_kwh is not None)
+        supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
+        coverage = round(supported / len(slots) * 100, 1) if slots else 0.0
+        return {
+            "value": coverage,
+            "status": "ok" if snapshot["profile"] in PROFILE_LEARNING_OPTIONS else "profile_unclassified",
+            "profile": snapshot["profile"],
+            "slot_count": len(slots),
+            "populated_slots": populated,
+            "supported_slots": supported,
+            "source_distribution": sources,
+        }
+
+    def _initial_result(self) -> dict[str, Any]:
+        return {
+            "value": 0.0,
+            "status": "initializing",
+            "profile": self.coordinator.profile,
+            "slot_count": 0,
+            "populated_slots": 0,
+            "supported_slots": 0,
+            "source_distribution": {},
+            "blockers": ["forecast_calculation_pending"],
+        }
+
+    @property
+    def native_value(self) -> float:
+        return float(self._result().get("value", 0.0))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        result = dict(self._result())
+        result.pop("value", None)
+        return result
+
+
+'''
+sensor = replace_class(
+    sensor,
+    "class DummyOSHomeForecastCoverageSensor(",
+    "class DummyOSHomeForecastConfidenceSensor(",
+    coverage,
+)
+
+peak = '''class DummyOSEnergyPeakLearningSensor(DummyOSAsyncPlannerResultSensor):
+    """Observer-only Step 6 Energy peak learning diagnostics."""
+
+    _attr_name = "DO Energy Peak Learning"
+    _attr_unique_id = "do_energy_peak_learning"
+    _attr_suggested_object_id = "do_energy_peak_learning"
+    _attr_icon = "mdi:chart-bell-curve-cumulative"
+    _unrecorded_attributes = frozenset({"calibration", "classifications", "events"})
+
+    @property
+    def name(self) -> str:
+        return "DO Energy Peak Learning"
+
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        profile = snapshot["profile"]
+        if profile not in PROFILE_LEARNING_OPTIONS:
+            return {
+                "schema_version": 1,
+                "algorithm_version": "peak_observer_v1",
+                "calibration_fingerprint": None,
+                "source_basis": {},
+                "profile": profile,
+                "status": "blocked",
+                "minimum_samples_per_hour": 32,
+                "minimum_distinct_days_per_hour": 8,
+                "threshold_method": "leave_one_local_day_out_positive_residual_quantile",
+                "threshold_quantile": 0.9,
+                "candidate_count": 0,
+                "event_count": 0,
+                "calibrated_hours": 0,
+                "classification_calibration": {},
+                "protected_windows": {},
+                "calibration": {},
+                "classifications": {},
+                "events": [],
+                "blockers": ["profile_unclassified"],
+            }
+        return calculate_peak_learning(snapshot["evaluations"], profile, dt_util.as_local)
+
+    def _initial_result(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "algorithm_version": "peak_observer_v1",
+            "calibration_fingerprint": None,
+            "source_basis": {},
+            "profile": self.coordinator.profile,
+            "status": "initializing",
+            "minimum_samples_per_hour": 32,
+            "minimum_distinct_days_per_hour": 8,
+            "threshold_method": "leave_one_local_day_out_positive_residual_quantile",
+            "threshold_quantile": 0.9,
+            "candidate_count": 0,
+            "event_count": 0,
+            "calibrated_hours": 0,
+            "classification_calibration": {},
+            "protected_windows": {},
+            "calibration": {},
+            "classifications": {},
+            "events": [],
+            "blockers": ["observer_calculation_pending"],
+        }
+
+    @property
+    def native_value(self) -> str:
+        return str(self._result().get("status", "initializing"))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        result = self._result()
+        return {
+            "schema_version": result["schema_version"],
+            "algorithm_version": result["algorithm_version"],
+            "calibration_fingerprint": result["calibration_fingerprint"],
+            "source_basis": result["source_basis"],
+            "profile": result["profile"],
+            "observer_only": True,
+            "forecast_influence_enabled": False,
+            "ready_for_model_influence": False,
+            "minimum_samples_per_hour": result["minimum_samples_per_hour"],
+            "minimum_distinct_days_per_hour": result["minimum_distinct_days_per_hour"],
+            "threshold_method": result["threshold_method"],
+            "threshold_quantile": result["threshold_quantile"],
+            "candidate_count": result["candidate_count"],
+            "event_count": result["event_count"],
+            "calibrated_hours": result["calibrated_hours"],
+            "classification_calibration": result["classification_calibration"],
+            "protected_windows": result["protected_windows"],
+            "calibration": result["calibration"],
+            "classifications": result["classifications"],
+            "events": result["events"],
+            "blockers": result.get("blockers", []),
+        }
+'''
+a = sensor.find("class DummyOSEnergyPeakLearningSensor(")
+if a < 0:
+    raise SystemExit("missing Peak Learning class")
+sensor = sensor[:a] + peak + "\n"
+sensor_path.write_text(sensor)
+
+version = "0.2.0-alpha.9"
+previous = "0.2.0-alpha.8"
+
+const_path = Path("custom_components/dummy_os_data/const.py")
+const = const_path.read_text()
+needle = f'VERSION = "{previous}"'
+if needle not in const:
+    raise SystemExit("unexpected const version")
+const_path.write_text(const.replace(needle, f'VERSION = "{version}"', 1))
+
+manifest_path = Path("custom_components/dummy_os_data/manifest.json")
+manifest = json.loads(manifest_path.read_text())
+if manifest.get("version") != previous:
+    raise SystemExit(f'unexpected manifest version: {manifest.get("version")}')
+manifest["version"] = version
+manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+release_test = Path("tests/test_release_consistency.py")
+release_text = release_test.read_text()
+needle = f'VERSION = "{previous}"'
+if needle not in release_text:
+    raise SystemExit("unexpected release consistency version")
+release_test.write_text(release_text.replace(needle, f'VERSION = "{version}"', 1))
+
+Path("tests/test_pre_step5_final_two_main_thread_fix.py").write_text('''from pathlib import Path\n\nROOT = Path(__file__).parents[1]\n\ndef test_coverage_and_peak_learning_are_executor_backed():\n    sensor = (ROOT / "custom_components/dummy_os_data/sensor.py").read_text()\n    assert "class DummyOSHomeForecastCoverageSensor(DummyOSAsyncPlannerResultSensor)" in sensor\n    assert "class DummyOSEnergyPeakLearningSensor(DummyOSAsyncPlannerResultSensor)" in sensor\n    assert "return calculate_peak_learning(snapshot[\\\"evaluations\\\"], profile, dt_util.as_local)" in sensor\n    coverage_block = sensor.split("class DummyOSHomeForecastCoverageSensor", 1)[1].split("class DummyOSHomeForecastConfidenceSensor", 1)[0]\n    assert "self._forecast()" not in coverage_block\n    peak_block = sensor.split("class DummyOSEnergyPeakLearningSensor", 1)[1]\n    assert "calculate_peak_learning(self.coordinator.evaluations" not in peak_block\n\ndef test_pre_step5_safety_and_identity_invariants_remain_present():\n    sensor = (ROOT / "custom_components/dummy_os_data/sensor.py").read_text()\n    preview = (ROOT / "custom_components/dummy_os_data/do_plan_preview.py").read_text()\n    for entity_id in ("do_energy_forecast_coverage", "do_energy_peak_learning"):\n        assert entity_id in sensor\n    assert '\"shadow_only\": True' in preview\n    assert '\"active_use_permitted\": False' in preview\n    assert '\"physical_execution_authority\": False' in preview\n''')
+
+notes = '''# GitHub Release\n\n**Tag:** `0.2.0-alpha.9`  \n**Release title:** Dummy OS Energy 0.2.0-alpha.9 - Final Pre-Step5 Main-Thread Fix\n\n## Dummy OS Energy 0.2.0-alpha.9\n\nDeze prerelease lost uitsluitend de twee resterende Dummy OS Energy main-threadwaarschuwingen op die na de live alpha.8-validatie overbleven. Planner Stap 5 wordt niet toegevoegd.\n\n### Opgelost\n- `DO Energy Forecast Coverage` bouwt de 72-uurs forecast niet langer synchronisch vanuit de entity state-property; de berekening draait via executor-backed caching.\n- `DO Energy Peak Learning` voert `calculate_peak_learning(...)` niet langer synchronisch uit tijdens entity state updates; de observerberekening draait via dezelfde executor-backed cachelaag.\n\n### Bewust ongewijzigd\n- native 15 minuten / 72 uur / exact 288 slots;\n- forecastformules en historical_baseline model 0.4;\n- Peak Learning-inhoud, drempels en observer-only betekenis;\n- entity-identiteiten;\n- Planner Stap 1 t/m 4;\n- reserve-/SOC-, prijs- en solarcontracten;\n- `shadow_only=true`, `active_use_permitted=false` en `physical_execution_authority=false`;\n- unknown/unavailable wordt niet als nul behandeld;\n- geen Planner Stap 5-functionaliteit.\n\n### Live-validatie na installatie\nNa installatie via HACS en een volledige Home Assistant-herstart moet worden gecontroleerd dat de twee in alpha.8 gemeten waarschuwingen niet terugkomen voor:\n- `sensor.do_energy_forecast_coverage` (0,520 s in alpha.8);\n- `sensor.do_energy_peak_learning` (0,451 s in alpha.8).\n\nDaarnaast controleren op nieuwe Dummy OS Energy main-threadwaarschuwingen. Planner Stap 5 blijft geparkeerd totdat deze live gate geslaagd is.\n'''
+Path(f"RELEASE_NOTES_{version}.md").write_text(notes)
+history = Path("RELEASE_NOTES.md")
+current = history.read_text()
+if f"**Tag:** `{version}`" in current:
+    raise SystemExit("alpha.9 release notes already present")
+history.write_text(notes + "\n---\n" + current)
