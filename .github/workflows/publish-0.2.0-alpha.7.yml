@@ -21,7 +21,6 @@ jobs:
       CHECKSUM_NAME: SHA256SUMS-0.2.0-alpha.7.txt
       RELEASE_TITLE: Dummy OS Energy 0.2.0-alpha.7 - Planner Main-Thread Performance Fix
       GH_TOKEN: ${{ github.token }}
-      RELEASE_NOTES_B64: IyBHaXRIdWIgUmVsZWFzZQoKKipUYWc6KiogYDAuMi4wLWFscGhhLjdgICAKKipSZWxlYXNlIHRpdGxlOioqIER1bW15IE9TIEVuZXJneSAwLjIuMC1hbHBoYS43IC0gUGxhbm5lciBNYWluLVRocmVhZCBQZXJmb3JtYW5jZSBGaXgKCiMjIER1bW15IE9TIEVuZXJneSAwLjIuMC1hbHBoYS43CgpEZXplIHByZS1yZWxlYXNlIHB1YmxpY2VlcnQgdWl0c2x1aXRlbmQgZGUgcmVlZHMgZ2VtZXJnZWRlIHZlcnZvbGdmaXggbmEgZGUgbGl2ZS12YWxpZGF0aWUgdmFuIDAuMi4wLWFscGhhLjYuIFBsYW5uZXIgU3RhcCA1IHdvcmR0IG5pZXQgdG9lZ2V2b2VnZC4KCiMjIyBPcGdlbG9zdAotIFZlcnBsYWF0c3QgZGUgcmVzdGVyZW5kZSB6d2FyZSBiZXJla2VuaW5nZW4gdmFuIGRlIHBsYW5uZXItLCBjb250cmFjdC0gZW4gbW9kZWwtaGVhbHRoa2V0ZW4gdmFuIGRlIEhvbWUgQXNzaXN0YW50IG1haW4gdGhyZWFkIG5hYXIgZXhlY3V0b3ItYmFja2VkIGFjaHRlcmdyb25kYmVyZWtlbmluZy4KLSBQYXN0IGRpdCBjYWNoZXBhdHJvb24gdG9lIG9wIEZvcmVjYXN0IFBsYW5uZXIgSG91cnMsIEZvcmVjYXN0IFBsYW5uZXIgQ29udHJhY3QsIERPIFBsYW4gSW5wdXQgNzJoLCBETyBQbGFuIEVuZXJneSBOZWVkLCBETyBQbGFuIFJlc2VydmUgU09DLCBETyBQbGFuIFByZXZpZXcgZW4gRm9yZWNhc3QgTW9kZWwgSGVhbHRoLgotIGBuYXRpdmVfdmFsdWVgIGVuIGBleHRyYV9zdGF0ZV9hdHRyaWJ1dGVzYCBsZXplbiBhbGxlZW4gaGV0IGxhYXRzdCB2b2x0b29pZGUgY2FjaGUtcmVzdWx0YWF0IGluIHBsYWF0cyB2YW4gZGUgdm9sbGVkaWdlIGdlbmVzdGUgcGxhbm5lcmtldGVuIHN5bmNocm9vbiBvcG5pZXV3IG9wIHRlIGJvdXdlbi4KLSBJbnZvZXIgd29yZHQgb3AgZGUgSG9tZSBBc3Npc3RhbnQgbWFpbiB0aHJlYWQgYWxzIHNuYXBzaG90IHZhc3RnZWxlZ2Q7IGRlIHB1cmUgcmVrZW5zdGFwIGRyYWFpdCB2aWEgYGhhc3MuYXN5bmNfYWRkX2V4ZWN1dG9yX2pvYiguLi4pYC4KLSBPdmVybGFwcGVuZGUgcmVmcmVzaGVzIHdvcmRlbiBzYW1lbmdldm9lZ2QgbWV0IGVlbiBwZW5kaW5nLWZsYWcgb20gb25ub2RpZ2UgcGFyYWxsZWxsZSBoZXJiZXJla2VuaW5nZW4gdGUgdm9vcmtvbWVuLgotIFRpamRlbnMgZGUgZWVyc3RlIGJlcmVrZW5pbmcga2FuIHRpamRlbGlqayBmYWlsLXNhZmUgYGluaXRpYWxpemluZ2AgemljaHRiYWFyIHppam4gbWV0IGJsb2NrZXIgYHBsYW5uZXJfY2FsY3VsYXRpb25fcGVuZGluZ2Agb2YgYG1vZGVsX2hlYWx0aF9jYWxjdWxhdGlvbl9wZW5kaW5nYC4KCiMjIyBCZXd1c3Qgb25nZXdpanppZ2QKLSBuYXRpdmUgZm9yZWNhc3RhcmNoaXRlY3R1dXIgYmxpamZ0IDE1IG1pbnV0ZW4gLyA3MiB1dXIgLyBleGFjdCAyODggc2xvdHM7Ci0gUGxhbm5lciBTdGFwIDEgdC9tIDQgYmxpanZlbiBpbmhvdWRlbGlqayBlbiBmdW5jdGlvbmVlbCBvbmdld2lqemlnZDsKLSBwbGFubmVyZm9ybXVsZXMsIHJlc2VydmUtL1NPQy1sb2dpY2EsIHByaWpzLS9zb2xhcmNvbnRyYWN0ZW4gZW4gZW50aXR5LWlkZW50aXRlaXRlbiB6aWpuIG5pZXQgZ2V3aWp6aWdkOwotIGdlZW4gUGxhbm5lciBTdGFwIDUtZnVuY3Rpb25hbGl0ZWl0OwotIGdlZW4gUGxhbiBTdG9yZSwgU2NoZWR1bGVyLCBCcmlkZ2UsIFNhZmV0eSBvZiBmeXNpZWtlIGV4ZWN1dGlvbi10YWtlb3ZlcjsKLSBgc2hhZG93X29ubHk9dHJ1ZWAsIGBhY3RpdmVfdXNlX3Blcm1pdHRlZD1mYWxzZWAgZW4gYHBoeXNpY2FsX2V4ZWN1dGlvbl9hdXRob3JpdHk9ZmFsc2VgIGJsaWp2ZW4gbGVpZGVuZDsKLSBjcm9zcy1zZW5zb3IgaGVyZ2VicnVpayB3b3JkdCBub2cgbmlldCBjZW50cmFhbCBnZWRlZWxkOyBlZXJzdCBsaXZlIG1ldGVuIG9mIGRlemUgZ2VyaWNodGUgZml4IHZvbGRvZW5kZSBpcy4KCiMjIyBMaXZlLXZhbGlkYXRpZSBuYSBpbnN0YWxsYXRpZQpOYSBpbnN0YWxsYXRpZSB2aWEgSEFDUyBlbiBlZW4gdm9sbGVkaWdlIEhvbWUgQXNzaXN0YW50LWhlcnN0YXJ0IG1vZXQgd29yZGVuIGdlY29udHJvbGVlcmQgZGF0OgotIGRlIGVlcmRlcmUgc3RhcnR1cC1tYWluLXRocmVhZHdhYXJzY2h1d2luZ2VuIHZvb3IgRm9yZWNhc3QgUGxhbm5lciBIb3VycyAofjAsNDc1IHMpLCBGb3JlY2FzdCBQbGFubmVyIENvbnRyYWN0ICh+MSwzNjggcyksIERPIFBsYW4gSW5wdXQgNzJoICh+MSwxOTMgcyksIERPIFBsYW4gRW5lcmd5IE5lZWQgKH4xLDUyNCBzKSwgRE8gUGxhbiBSZXNlcnZlIFNPQyAofjEsNzY1IHMpLCBETyBQbGFuIFByZXZpZXcgKH4zLDU3MyBzKSBlbiBGb3JlY2FzdCBNb2RlbCBIZWFsdGggKH4wLDcwNyBzKSBuaWV0IHRlcnVna29tZW4gYWxzIGJsb2trZXJlbmRlL3N5bmNocm9uZSB3YWFyc2NodXdpbmdlbjsKLSBQbGFubmVyIFN0YXAgMSB0L20gNCBkZXplbGZkZSBvYnNlcnZlci1vbmx5IHVpdGtvbXN0ZW4gYmxpanZlbiBnZXZlbjsKLSBgc2hhZG93X29ubHk9dHJ1ZWAsIGBhY3RpdmVfdXNlX3Blcm1pdHRlZD1mYWxzZWAgZW4gYHBoeXNpY2FsX2V4ZWN1dGlvbl9hdXRob3JpdHk9ZmFsc2VgIGJlaG91ZGVuIGJsaWp2ZW47Ci0gZ2VlbiBuaWV1d2UgcmVncmVzc2llcyBpbiBkZSBzdGFydHVwLWxvZyB6aWNodGJhYXIgemlqbi4KClBsYW5uZXIgU3RhcCA1IGJsaWpmdCBnZXBhcmtlZXJkIHRvdGRhdCBkZXplIHBlcmZvcm1hbmNlLWdhdGUgbGl2ZSBpcyBnZXNsYWFnZC4K
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,34 +29,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Prepare alpha.7 metadata
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import base64
-          import json
-          version = '0.2.0-alpha.7'
-          previous = '0.2.0-alpha.6'
-          p = Path('custom_components/dummy_os_data/const.py')
-          p.write_text(p.read_text().replace(f'VERSION = "{previous}"', f'VERSION = "{version}"', 1))
-          p = Path('custom_components/dummy_os_data/manifest.json')
-          manifest = json.loads(p.read_text())
-          manifest['version'] = version
-          p.write_text(json.dumps(manifest, indent=2) + '\n')
-          p = Path('tests/test_release_consistency.py')
-          p.write_text(p.read_text().replace(f'VERSION = "{previous}"', f'VERSION = "{version}"', 1))
-          notes = base64.b64decode(__import__('os').environ['RELEASE_NOTES_B64']).decode()
-          Path(f'RELEASE_NOTES_{version}.md').write_text(notes)
-          history = Path('RELEASE_NOTES.md')
-          history.write_text(notes + '\n---\n' + history.read_text())
-          PY
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add custom_components/dummy_os_data/const.py custom_components/dummy_os_data/manifest.json tests/test_release_consistency.py RELEASE_NOTES.md RELEASE_NOTES_0.2.0-alpha.7.md
-          git commit -m "Publish 0.2.0-alpha.7 metadata"
-          git push origin HEAD:main
       - run: python -m pip install --upgrade pytest
-      - name: Compile and test release commit
+      - name: Compile and test exact release source
         run: |
           python -m compileall -q custom_components/dummy_os_data tests
           python -m pytest -q
@@ -68,12 +41,12 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           sensor = Path('custom_components/dummy_os_data/sensor.py').read_text()
-          preview = Path('custom_components/dummy_os_data/do_plan_preview_sensor.py').read_text()
+          preview_sensor = Path('custom_components/dummy_os_data/do_plan_preview_sensor.py').read_text()
           assert 'class DummyOSAsyncPlannerResultSensor' in sensor
           assert 'async_add_executor_job' in sensor
           assert 'planner_calculation_pending' in sensor
           assert 'model_health_calculation_pending' in sensor
-          assert 'async_add_executor_job' in preview
+          assert 'async_add_executor_job' in preview_sensor
           PY
           grep -F '"physical_execution_authority": False' custom_components/dummy_os_data/do_plan_preview.py
           grep -F '"shadow_only": True' custom_components/dummy_os_data/do_plan_preview.py
