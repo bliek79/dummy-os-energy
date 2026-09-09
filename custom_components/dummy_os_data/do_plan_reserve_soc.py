@@ -6,7 +6,6 @@ import math
 from typing import Any
 
 ENERGY_EPSILON_KWH = 0.01
-PERCENT_EPSILON = 0.001
 
 
 def _finite(value: Any, *, non_negative: bool = False) -> float | None:
@@ -30,7 +29,9 @@ def build_do_plan_reserve_soc(*, energy_need_result: dict[str, Any]) -> dict[str
     base = {
         "energy_need_status": energy_need_result.get("status"),
         "energy_need_reason": energy_need_result.get("reason"),
+        "input_status": energy_need_result.get("input_status"),
         "input_rows_signature": energy_need_result.get("input_rows_signature"),
+        "first_usable_solar": energy_need_result.get("first_usable_solar"),
         "shadow_only": True,
         "active_use_permitted": False,
         "physical_execution_authority": False,
@@ -79,8 +80,11 @@ def build_do_plan_reserve_soc(*, energy_need_result: dict[str, Any]) -> dict[str
             "energy_need_until_solar_kwh": energy_need,
             "safety_reserve_kwh": reserve_kwh,
             "required_including_reserve_kwh": required,
+            "available_battery_kwh": None,
+            "usable_capacity_above_min_kwh": None,
             "current_usable_above_min_kwh": None,
             "max_usable_above_min_kwh": None,
+            "reserve_soc_raw_percent": None,
             "reserve_soc_target_percent": None,
             "reserve_deficit_kwh": None,
             "reserve_deficit_percent": None,
@@ -97,16 +101,16 @@ def build_do_plan_reserve_soc(*, energy_need_result: dict[str, Any]) -> dict[str
     assert reserve_kwh is not None
     assert required is not None
 
-    current_usable = capacity * max(soc - min_soc, 0.0) / 100.0
-    max_usable = capacity * max(100.0 - min_soc, 0.0) / 100.0
-    raw_target_soc = min_soc + (required / capacity * 100.0)
-    reserve_soc_target = min(100.0, raw_target_soc)
+    available_battery_kwh = capacity * max(soc - min_soc, 0.0) / 100.0
+    usable_capacity_above_min_kwh = capacity * max(100.0 - min_soc, 0.0) / 100.0
+    reserve_soc_raw_percent = min_soc + (required / capacity * 100.0)
+    reserve_soc_target_percent = min(100.0, reserve_soc_raw_percent)
 
-    reserve_deficit_kwh = max(required - current_usable, 0.0)
-    free_above_reserve_kwh = max(current_usable - required, 0.0)
+    reserve_deficit_kwh = max(required - available_battery_kwh, 0.0)
+    free_above_reserve_kwh = max(available_battery_kwh - required, 0.0)
     reserve_deficit_percent = reserve_deficit_kwh / capacity * 100.0
     free_above_reserve_percent = free_above_reserve_kwh / capacity * 100.0
-    unmet_at_full = max(required - max_usable, 0.0)
+    unmet_at_full = max(required - usable_capacity_above_min_kwh, 0.0)
 
     if unmet_at_full > ENERGY_EPSILON_KWH:
         status = "infeasible"
@@ -142,9 +146,12 @@ def build_do_plan_reserve_soc(*, energy_need_result: dict[str, Any]) -> dict[str
         "energy_need_until_solar_kwh": round(energy_need, 3),
         "safety_reserve_kwh": round(reserve_kwh, 3),
         "required_including_reserve_kwh": round(required, 3),
-        "current_usable_above_min_kwh": round(current_usable, 3),
-        "max_usable_above_min_kwh": round(max_usable, 3),
-        "reserve_soc_target_percent": round(reserve_soc_target, 3),
+        "available_battery_kwh": round(available_battery_kwh, 3),
+        "usable_capacity_above_min_kwh": round(usable_capacity_above_min_kwh, 3),
+        "current_usable_above_min_kwh": round(available_battery_kwh, 3),
+        "max_usable_above_min_kwh": round(usable_capacity_above_min_kwh, 3),
+        "reserve_soc_raw_percent": round(reserve_soc_raw_percent, 3),
+        "reserve_soc_target_percent": round(reserve_soc_target_percent, 3),
         "reserve_deficit_kwh": round(reserve_deficit_kwh, 3),
         "reserve_deficit_percent": round(reserve_deficit_percent, 3),
         "free_above_reserve_kwh": round(free_above_reserve_kwh, 3),
