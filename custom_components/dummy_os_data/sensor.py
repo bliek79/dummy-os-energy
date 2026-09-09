@@ -1176,58 +1176,113 @@ class DummyOSEnergyTimeWindowsSensor(DummyOSBaseSensor):
     _attr_suggested_object_id = "do_energy_time_windows"
     _attr_icon = "mdi:timeline-clock-outline"
 
+    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
+        super().__init__(coordinator)
+        self._cached_result: dict[str, Any] | None = None
+        self._refresh_task = None
+        self._refresh_pending = False
+
     @property
     def name(self) -> str:
         """Return the canonical runtime name used for friendly_name."""
         return "DO Energy Time Windows"
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._schedule_refresh()
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_task.cancel()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_update(self) -> None:
+        self._schedule_refresh()
+
+    @callback
+    def _schedule_refresh(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_pending = True
+            return
+        self._refresh_task = self.hass.async_create_task(self._async_refresh_result())
+
+    async def _async_refresh_result(self) -> None:
+        while True:
+            self._refresh_pending = False
+            evaluations = list(self.coordinator.evaluations)
+            profile = self.coordinator.profile
+            result = await self.hass.async_add_executor_job(
+                self._calculate_result, evaluations, profile
+            )
+            self._cached_result = result
+            self.async_write_ha_state()
+            if not self._refresh_pending:
+                return
+
+    @staticmethod
+    def _empty_result(profile: str, *, status: str, blocker: str) -> dict[str, Any]:
+        classification_source = "profile_unclassified" if blocker == "profile_unclassified" else "calculation_pending"
+        return {
+            "schema_version": "7b.1",
+            "algorithm_version": "time_windows_observer_v1",
+            "profile": profile,
+            "context_key": f"{profile}|{classification_source}",
+            "classification_source": classification_source,
+            "observer_only": True,
+            "forecast_influence_enabled": False,
+            "ready_for_live_observation": False,
+            "ready_for_forecast_influence": False,
+            "event_count": 0,
+            "event_days": 0,
+            "rejected_event_count": 0,
+            "reject_reasons": {},
+            "window_start": None,
+            "window_end": None,
+            "window_width_minutes": None,
+            "window_quarter_count": None,
+            "p10_start_minute": None,
+            "p90_end_minute": None,
+            "median_center_minute": None,
+            "center_mad_minutes": None,
+            "contained_day_count": None,
+            "contained_day_ratio": None,
+            "median_event_duration_minutes": None,
+            "median_daily_energy_kwh": None,
+            "energy_iqr_kwh": None,
+            "lodo_max_start_shift_minutes": None,
+            "lodo_max_end_shift_minutes": None,
+            "early_late_start_shift_minutes": None,
+            "early_late_end_shift_minutes": None,
+            "protected_window_overlap": False,
+            "native_resolution_minutes": 15,
+            "calibration_method": "daily_representative_p10_start_p90_end",
+            "minimum_event_days_collecting_exit": 8,
+            "minimum_event_days_calibrated": 12,
+            "minimum_event_days_stable": 16,
+            "maximum_boundary_shift_minutes": 15,
+            "source_basis": {},
+            "calibration_fingerprint": None,
+            "blockers": [blocker],
+            "status": status,
+        }
+
+    def _calculate_result(
+        self, evaluations: list[dict[str, Any]], profile: str
+    ) -> dict[str, Any]:
+        if profile not in PROFILE_LEARNING_OPTIONS:
+            return self._empty_result(
+                profile, status="blocked", blocker="profile_unclassified"
+            )
+        peak_result = calculate_peak_learning(evaluations, profile, dt_util.as_local)
+        return calculate_time_windows(peak_result, profile, dt_util.as_local)
+
     def _result(self) -> dict[str, Any]:
-        if not self._profile_learnable:
-            return {
-                "schema_version": "7b.1",
-                "algorithm_version": "time_windows_observer_v1",
-                "profile": self.coordinator.profile,
-                "context_key": f"{self.coordinator.profile}|profile_unclassified",
-                "classification_source": "profile_unclassified",
-                "observer_only": True,
-                "forecast_influence_enabled": False,
-                "ready_for_live_observation": False,
-                "ready_for_forecast_influence": False,
-                "event_count": 0,
-                "event_days": 0,
-                "rejected_event_count": 0,
-                "reject_reasons": {},
-                "window_start": None,
-                "window_end": None,
-                "window_width_minutes": None,
-                "window_quarter_count": None,
-                "p10_start_minute": None,
-                "p90_end_minute": None,
-                "median_center_minute": None,
-                "center_mad_minutes": None,
-                "contained_day_count": None,
-                "contained_day_ratio": None,
-                "median_event_duration_minutes": None,
-                "median_daily_energy_kwh": None,
-                "energy_iqr_kwh": None,
-                "lodo_max_start_shift_minutes": None,
-                "lodo_max_end_shift_minutes": None,
-                "early_late_start_shift_minutes": None,
-                "early_late_end_shift_minutes": None,
-                "protected_window_overlap": False,
-                "native_resolution_minutes": 15,
-                "calibration_method": "daily_representative_p10_start_p90_end",
-                "minimum_event_days_collecting_exit": 8,
-                "minimum_event_days_calibrated": 12,
-                "minimum_event_days_stable": 16,
-                "maximum_boundary_shift_minutes": 15,
-                "source_basis": {},
-                "calibration_fingerprint": None,
-                "blockers": ["profile_unclassified"],
-                "status": "blocked",
-            }
-        peak_result = calculate_peak_learning(self.coordinator.evaluations, self.coordinator.profile, dt_util.as_local)
-        return calculate_time_windows(peak_result, self.coordinator.profile, dt_util.as_local)
+        return self._cached_result or self._empty_result(
+            self.coordinator.profile,
+            status="initializing",
+            blocker="observer_calculation_pending",
+        )
 
     @property
     def native_value(self) -> str:
