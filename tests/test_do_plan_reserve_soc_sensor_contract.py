@@ -18,7 +18,9 @@ def test_reserve_soc_sensor_is_registered_observer_only() -> None:
 
 
 def test_step3_reuses_step2_live_soc_path_and_keeps_identity_cleanup_deferred() -> None:
-    assert 'energy_need_result = super()._result()' in SENSOR
+    assert 'def _build_reserve_from_snapshot(' in SENSOR
+    assert 'energy_need_result = _build_energy_need_from_snapshot(snapshot)' in SENSOR
     assert 'soc_source_entity' in SENSOR
+    assert 'class DummyOSPlanReserveSOCSensor(DummyOSPlanEnergyNeedSensor):' in SENSOR
     init_source = (ROOT / "custom_components/dummy_os_data/__init__.py").read_text()
     assert '("sensor", "do_plan_reserve_soc", "sensor.do_plan_reserve_soc")' not in init_source

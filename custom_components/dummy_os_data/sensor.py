@@ -30,6 +30,7 @@ from .evaluation import (
     calculate_day_type_quality,
     calculate_daypart_quality,
     calculate_hour_quality,
+    calculate_metrics,
     calculate_peak_learning,
 )
 from .time_windows import calculate_time_windows
@@ -341,33 +342,187 @@ class DummyOSHomeForecastTimelineSensor(DummyOSBaseSensor):
         }
 
 
+def _planner_runtime_snapshot(
+    coordinator: DummyOSHomeDataCoordinator,
+    *,
+    now: datetime | None = None,
+    soc_percent: float | None = None,
+) -> dict[str, Any]:
+    """Snapshot all planner/model inputs on the HA main thread."""
+    return {
+        "records": list(coordinator.records),
+        "evaluations": list(coordinator.evaluations),
+        "horizon_daily_stats": dict(coordinator.horizon_daily_stats),
+        "profile": coordinator.profile,
+        "source_available": coordinator.source_available,
+        "solar_points": list(coordinator.solar.planner_points),
+        "price_points": list(coordinator.prices.planner_points),
+        "solar_status": coordinator.solar.source_status,
+        "prices_status": coordinator.prices.status,
+        "prices_freshness": coordinator.prices.freshness,
+        "now": now or dt_util.utcnow(),
+        "soc_percent": soc_percent,
+    }
+
+
+def _build_planner_hours_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    reference = snapshot["now"]
+    profile = snapshot["profile"]
+    model = HomeBaselineForecast(snapshot["records"])
+    public_slots = model.build(profile, now=reference)
+    if not public_slots:
+        return aggregate_planner_hours([], profile=profile, localize=dt_util.as_local)
+    generated_count = required_generated_slot_count(public_slots[0].start, dt_util.as_local)
+    extended_slots = model.build(profile, now=reference, slot_count=generated_count)
+    result = aggregate_planner_hours(extended_slots, profile=profile, localize=dt_util.as_local)
+    if profile not in PROFILE_LEARNING_OPTIONS:
+        result["status"] = "profile_unclassified"
+    return result
+
+
+def _build_model_health_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    profile = snapshot["profile"]
+    records = snapshot["records"]
+    evaluations = snapshot["evaluations"]
+    slots = HomeBaselineForecast(records).build(profile, now=snapshot["now"])
+    supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
+    coverage = round(supported / len(slots) * 100, 1) if slots else None
+    confidence = HomeBaselineForecast.average_confidence(slots)
+    metrics = calculate_metrics(evaluations, profile)
+    horizon_quality = calculate_horizon_quality(snapshot["horizon_daily_stats"], profile)
+    day_type_daypart_quality = calculate_day_type_daypart_quality(
+        evaluations, records, profile, dt_util.as_local
+    )
+    hour_quality = calculate_hour_quality(evaluations, records, profile, dt_util.as_local)
+    return calculate_model_health_readiness(
+        records=records,
+        profile=profile,
+        source_available=snapshot["source_available"],
+        forecast_coverage_percent=coverage,
+        average_confidence_percent=confidence,
+        evaluation_metrics=metrics,
+        horizon_quality=horizon_quality,
+        day_type_daypart_quality=day_type_daypart_quality,
+        hour_quality=hour_quality,
+        localize=dt_util.as_local,
+    )
+
+
+def _build_contract_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return build_forecast_planner_contract(
+        planner_hours=_build_planner_hours_from_snapshot(snapshot),
+        model_health=_build_model_health_from_snapshot(snapshot),
+    )
+
+
+def _build_plan_input_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return build_do_plan_input_72h(
+        contract=_build_contract_from_snapshot(snapshot),
+        solar_points=snapshot["solar_points"],
+        price_points=snapshot["price_points"],
+        solar_status=snapshot["solar_status"],
+        prices_status=snapshot["prices_status"],
+        prices_freshness=snapshot["prices_freshness"],
+    )
+
+
+def _build_energy_need_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    result = build_do_plan_energy_need(
+        input_result=_build_plan_input_from_snapshot(snapshot),
+        soc_percent=snapshot.get("soc_percent"),
+        battery_capacity_kwh=7.2,
+        min_soc_percent=5.0,
+        safety_reserve_percent=7.0,
+        now=snapshot["now"],
+    )
+    result["soc_source_entity"] = "sensor.anker_solix_solarbank_max_ac_185_soc"
+    result["source_layer_status"] = "temporary_direct_soc_source_until_planner_source_contract"
+    return result
+
+
+def _build_reserve_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    energy_need_result = _build_energy_need_from_snapshot(snapshot)
+    result = build_do_plan_reserve_soc(energy_need_result=energy_need_result)
+    result["energy_need_entity"] = "sensor.do_plan_energy_need"
+    result["soc_source_entity"] = energy_need_result.get("soc_source_entity")
+    result["source_layer_status"] = energy_need_result.get("source_layer_status")
+    return result
+
+
 def _build_planner_hours_result(
     coordinator: DummyOSHomeDataCoordinator,
     *,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    reference = now or dt_util.utcnow()
-    model = HomeBaselineForecast(coordinator.records)
-    public_slots = model.build(coordinator.profile, now=reference)
-    if not public_slots:
-        return aggregate_planner_hours(
-            [], profile=coordinator.profile, localize=dt_util.as_local
-        )
-    generated_count = required_generated_slot_count(
-        public_slots[0].start, dt_util.as_local
+    """Backward-compatible synchronous helper for tests/internal callers."""
+    return _build_planner_hours_from_snapshot(
+        _planner_runtime_snapshot(coordinator, now=now)
     )
-    extended_slots = model.build(
-        coordinator.profile, now=reference, slot_count=generated_count
-    )
-    result = aggregate_planner_hours(
-        extended_slots, profile=coordinator.profile, localize=dt_util.as_local
-    )
-    if coordinator.profile not in PROFILE_LEARNING_OPTIONS:
-        result["status"] = "profile_unclassified"
-    return result
 
 
-class DummyOSEnergyForecastPlannerHoursSensor(DummyOSBaseSensor):
+def _build_do_plan_input_result(coordinator: DummyOSHomeDataCoordinator) -> dict[str, Any]:
+    """Backward-compatible synchronous helper for tests/internal callers."""
+    return _build_plan_input_from_snapshot(_planner_runtime_snapshot(coordinator))
+
+
+class DummyOSAsyncPlannerResultSensor(DummyOSBaseSensor):
+    """Executor-backed cached result sensor for expensive planner/model calculations."""
+
+    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
+        super().__init__(coordinator)
+        self._cached_result: dict[str, Any] | None = None
+        self._refresh_task = None
+        self._refresh_pending = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._schedule_refresh()
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_task.cancel()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_update(self) -> None:
+        self._schedule_refresh()
+
+    @callback
+    def _schedule_refresh(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_pending = True
+            return
+        self._refresh_task = self.hass.async_create_task(self._async_refresh_result())
+
+    async def _async_refresh_result(self) -> None:
+        while True:
+            self._refresh_pending = False
+            snapshot = self._snapshot()
+            result = await self.hass.async_add_executor_job(
+                self._calculate_result, snapshot
+            )
+            self._cached_result = result
+            self.async_write_ha_state()
+            if not self._refresh_pending:
+                return
+
+    def _snapshot(self) -> dict[str, Any]:
+        return _planner_runtime_snapshot(self.coordinator)
+
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def _initial_result(self) -> dict[str, Any]:
+        return {
+            "status": "initializing",
+            "blockers": ["planner_calculation_pending"],
+        }
+
+    def _result(self) -> dict[str, Any]:
+        return self._cached_result or self._initial_result()
+
+
+class DummyOSEnergyForecastPlannerHoursSensor(DummyOSAsyncPlannerResultSensor):
     """Step 14 exact 72 complete planner-hour forecast interface."""
 
     _attr_name = "DO Energy Forecast Planner Hours"
@@ -376,19 +531,27 @@ class DummyOSEnergyForecastPlannerHoursSensor(DummyOSBaseSensor):
     _attr_icon = "mdi:clock-outline"
     _unrecorded_attributes = frozenset({"hours"})
 
-    def _result(self) -> dict[str, Any]:
-        return _build_planner_hours_result(self.coordinator)
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return _build_planner_hours_from_snapshot(snapshot)
+
+    def _initial_result(self) -> dict[str, Any]:
+        return {
+            "status": "initializing",
+            "valid_hour_count": 0,
+            "hours": [],
+            "blockers": ["planner_calculation_pending"],
+        }
 
     @property
     def native_value(self) -> int:
-        return int(self._result()["valid_hour_count"])
+        return int(self._result().get("valid_hour_count", 0))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._result())
 
 
-class DummyOSEnergyForecastPlannerContractSensor(DummyOSBaseSensor):
+class DummyOSEnergyForecastPlannerContractSensor(DummyOSAsyncPlannerResultSensor):
     """Stable Step 15 Forecast -> Planner contract."""
 
     _attr_name = "DO Energy Forecast Planner Contract"
@@ -397,47 +560,19 @@ class DummyOSEnergyForecastPlannerContractSensor(DummyOSBaseSensor):
     _attr_icon = "mdi:connection"
     _unrecorded_attributes = frozenset({"hours"})
 
-    def _result(self) -> dict[str, Any]:
-        now = dt_util.utcnow()
-        planner_hours = _build_planner_hours_result(self.coordinator, now=now)
-        model = HomeBaselineForecast(self.coordinator.records)
-        slots = model.build(self.coordinator.profile, now=now)
-        model_health = _build_model_health_result(self.coordinator, slots)
-        return build_forecast_planner_contract(
-            planner_hours=planner_hours,
-            model_health=model_health,
-        )
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return _build_contract_from_snapshot(snapshot)
 
     @property
     def native_value(self) -> str:
-        return str(self._result()["status"])
+        return str(self._result().get("status", "initializing"))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._result())
 
 
-def _build_do_plan_input_result(coordinator: DummyOSHomeDataCoordinator) -> dict[str, Any]:
-    """Build the shared observer-only 72-hour planner input matrix."""
-    now = dt_util.utcnow()
-    planner_hours = _build_planner_hours_result(coordinator, now=now)
-    model = HomeBaselineForecast(coordinator.records)
-    slots = model.build(coordinator.profile, now=now)
-    contract = build_forecast_planner_contract(
-        planner_hours=planner_hours,
-        model_health=_build_model_health_result(coordinator, slots),
-    )
-    return build_do_plan_input_72h(
-        contract=contract,
-        solar_points=coordinator.solar.planner_points,
-        price_points=coordinator.prices.planner_points,
-        solar_status=coordinator.solar.source_status,
-        prices_status=coordinator.prices.status,
-        prices_freshness=coordinator.prices.freshness,
-    )
-
-
-class DummyOSPlanInput72hSensor(DummyOSBaseSensor):
+class DummyOSPlanInput72hSensor(DummyOSAsyncPlannerResultSensor):
     """Observer-only exact 72-hour input matrix for the new internal planner."""
 
     _attr_name = "DO Plan Input 72h"
@@ -463,19 +598,19 @@ class DummyOSPlanInput72hSensor(DummyOSBaseSensor):
             self._remove_prices_listener()
         await super().async_will_remove_from_hass()
 
-    def _result(self) -> dict[str, Any]:
-        return _build_do_plan_input_result(self.coordinator)
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return _build_plan_input_from_snapshot(snapshot)
 
     @property
     def native_value(self) -> str:
-        return str(self._result()["status"])
+        return str(self._result().get("status", "initializing"))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._result())
 
 
-class DummyOSPlanEnergyNeedSensor(DummyOSBaseSensor):
+class DummyOSPlanEnergyNeedSensor(DummyOSPlanInput72hSensor):
     """Observer-only battery energy need until usable solar returns."""
 
     _attr_name = "DO Plan Energy Need"
@@ -490,14 +625,10 @@ class DummyOSPlanEnergyNeedSensor(DummyOSBaseSensor):
 
     def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
         super().__init__(coordinator)
-        self._remove_solar_listener = None
-        self._remove_prices_listener = None
         self._remove_soc_listener = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._remove_solar_listener = self.coordinator.solar.async_add_listener(self._handle_update)
-        self._remove_prices_listener = self.coordinator.prices.async_add_listener(self._handle_update)
         self._remove_soc_listener = async_track_state_change_event(
             self.coordinator.hass,
             [self.SOC_ENTITY],
@@ -505,17 +636,13 @@ class DummyOSPlanEnergyNeedSensor(DummyOSBaseSensor):
         )
 
     async def async_will_remove_from_hass(self) -> None:
-        if self._remove_solar_listener is not None:
-            self._remove_solar_listener()
-        if self._remove_prices_listener is not None:
-            self._remove_prices_listener()
         if self._remove_soc_listener is not None:
             self._remove_soc_listener()
         await super().async_will_remove_from_hass()
 
     @callback
     def _handle_soc_update(self, _event) -> None:
-        self.async_write_ha_state()
+        self._schedule_refresh()
 
     def _soc_percent(self) -> float | None:
         state = self.coordinator.hass.states.get(self.SOC_ENTITY)
@@ -527,26 +654,14 @@ class DummyOSPlanEnergyNeedSensor(DummyOSBaseSensor):
             return None
         return value if 0.0 <= value <= 100.0 else None
 
-    def _result(self) -> dict[str, Any]:
-        result = build_do_plan_energy_need(
-            input_result=_build_do_plan_input_result(self.coordinator),
+    def _snapshot(self) -> dict[str, Any]:
+        return _planner_runtime_snapshot(
+            self.coordinator,
             soc_percent=self._soc_percent(),
-            battery_capacity_kwh=self.BATTERY_CAPACITY_KWH,
-            min_soc_percent=self.MIN_SOC_PERCENT,
-            safety_reserve_percent=self.SAFETY_RESERVE_PERCENT,
-            now=dt_util.utcnow(),
         )
-        result["soc_source_entity"] = self.SOC_ENTITY
-        result["source_layer_status"] = "temporary_direct_soc_source_until_planner_source_contract"
-        return result
 
-    @property
-    def native_value(self) -> str:
-        return str(self._result()["status"])
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return dict(self._result())
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return _build_energy_need_from_snapshot(snapshot)
 
 
 class DummyOSPlanReserveSOCSensor(DummyOSPlanEnergyNeedSensor):
@@ -557,13 +672,8 @@ class DummyOSPlanReserveSOCSensor(DummyOSPlanEnergyNeedSensor):
     _attr_suggested_object_id = "do_plan_reserve_soc"
     _attr_icon = "mdi:battery-lock-outline"
 
-    def _result(self) -> dict[str, Any]:
-        energy_need_result = super()._result()
-        result = build_do_plan_reserve_soc(energy_need_result=energy_need_result)
-        result["energy_need_entity"] = "sensor.do_plan_energy_need"
-        result["soc_source_entity"] = energy_need_result.get("soc_source_entity")
-        result["source_layer_status"] = energy_need_result.get("source_layer_status")
-        return result
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return _build_reserve_from_snapshot(snapshot)
 
 
 class DummyOSHomeForecastNextQuarterSensor(DummyOSBaseSensor):
@@ -652,58 +762,37 @@ def _build_model_health_result(
     coordinator: DummyOSHomeDataCoordinator,
     slots: list[Any],
 ) -> dict[str, Any]:
-    supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
-    coverage = round(supported / len(slots) * 100, 1) if slots else None
-    confidence = HomeBaselineForecast.average_confidence(slots)
-    metrics = coordinator.evaluation_metrics(coordinator.profile)
-    horizon_quality = calculate_horizon_quality(
-        coordinator.horizon_daily_stats,
-        coordinator.profile,
-    )
-    day_type_daypart_quality = calculate_day_type_daypart_quality(
-        coordinator.evaluations,
-        coordinator.records,
-        coordinator.profile,
-        dt_util.as_local,
-    )
-    hour_quality = calculate_hour_quality(
-        coordinator.evaluations,
-        coordinator.records,
-        coordinator.profile,
-        dt_util.as_local,
-    )
-    return calculate_model_health_readiness(
-        records=coordinator.records,
-        profile=coordinator.profile,
-        source_available=coordinator.source_available,
-        forecast_coverage_percent=coverage,
-        average_confidence_percent=confidence,
-        evaluation_metrics=metrics,
-        horizon_quality=horizon_quality,
-        day_type_daypart_quality=day_type_daypart_quality,
-        hour_quality=hour_quality,
-        localize=dt_util.as_local,
-    )
+    """Backward-compatible synchronous helper for tests/internal callers."""
+    snapshot = _planner_runtime_snapshot(coordinator)
+    snapshot["now"] = slots[0].start if slots else snapshot["now"]
+    return _build_model_health_from_snapshot(snapshot)
 
 
-class DummyOSHomeForecastModelHealthSensor(DummyOSBaseSensor):
+class DummyOSHomeForecastModelHealthSensor(DummyOSAsyncPlannerResultSensor):
     _attr_name = "DO Energy Forecast Model Health"
     _attr_unique_id = "do_energy_forecast_model_health"
     _attr_suggested_object_id = "do_energy_forecast_model_health"
     _attr_icon = "mdi:heart-pulse"
 
-    def _readiness(self) -> dict[str, Any]:
-        return _build_model_health_result(self.coordinator, self._forecast())
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return _build_model_health_from_snapshot(snapshot)
+
+    def _initial_result(self) -> dict[str, Any]:
+        return {
+            "status": "initializing",
+            "readiness_status": "initializing",
+            "blockers": ["model_health_calculation_pending"],
+        }
 
     @property
     def native_value(self) -> str:
         if not self._profile_learnable:
             return "profile_unclassified"
-        return str(self._readiness()["readiness_status"])
+        return str(self._result().get("readiness_status", "initializing"))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return dict(self._readiness())
+        return dict(self._result())
 
 
 class DummyOSEvaluationBaseSensor(DummyOSBaseSensor):

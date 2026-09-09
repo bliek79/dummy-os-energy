@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.util import dt as dt_util
-
 from .do_plan_preview import build_do_plan_preview
 
 
@@ -15,7 +13,11 @@ def build_do_plan_preview_sensors(coordinator: Any) -> list[Any]:
     The lazy import avoids a module cycle while reusing the already validated
     Step-1/2/3 sensor chain and its update listeners.
     """
-    from .sensor import DummyOSPlanReserveSOCSensor, _build_do_plan_input_result
+    from .sensor import (
+        DummyOSPlanReserveSOCSensor,
+        _build_plan_input_from_snapshot,
+        _build_reserve_from_snapshot,
+    )
 
     class DummyOSPlanPreviewSensor(DummyOSPlanReserveSOCSensor):
         """Observer-only safety, solar-headroom and trade preview."""
@@ -34,13 +36,13 @@ def build_do_plan_preview_sensors(coordinator: Any) -> list[Any]:
         MAX_CHARGE_POWER_W = 3200
         MAX_DISCHARGE_POWER_W = 3200
 
-        def _result(self) -> dict[str, Any]:
-            input_result = _build_do_plan_input_result(self.coordinator)
-            reserve_result = super()._result()
+        def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+            input_result = _build_plan_input_from_snapshot(snapshot)
+            reserve_result = _build_reserve_from_snapshot(snapshot)
             result = build_do_plan_preview(
                 input_result=input_result,
                 reserve_result=reserve_result,
-                now=dt_util.utcnow(),
+                now=snapshot["now"],
                 charge_efficiency_percent=self.CHARGE_EFFICIENCY_PERCENT,
                 discharge_efficiency_percent=self.DISCHARGE_EFFICIENCY_PERCENT,
                 minimum_trade_margin=self.MINIMUM_TRADE_MARGIN,
