@@ -334,70 +334,60 @@ class DummyOSEnergyFallbackHierarchySensor(SensorEntity):
     def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
         self.coordinator = coordinator
         self._remove_listener = None
+        self._cached_result: dict[str, Any] | None = None
+        self._refresh_task = None
+        self._refresh_pending = False
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, "main")},
-            name=NAME,
-            manufacturer="Dummy OS",
-            model="Forecast Platform",
-            sw_version=VERSION,
-        )
+        return DeviceInfo(identifiers={(DOMAIN, "main")}, name=NAME, manufacturer="Dummy OS", model="Forecast Platform", sw_version=VERSION)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self._remove_listener = self.coordinator.async_add_listener(self._handle_update)
+        self._schedule_refresh()
 
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener is not None:
             self._remove_listener()
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_task.cancel()
         await super().async_will_remove_from_hass()
 
     @callback
     def _handle_update(self) -> None:
-        self.async_write_ha_state()
+        self._schedule_refresh()
+
+    @callback
+    def _schedule_refresh(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_pending = True
+            return
+        self._refresh_task = self.hass.async_create_task(self._async_refresh_result())
+
+    async def _async_refresh_result(self) -> None:
+        while True:
+            self._refresh_pending = False
+            records = list(self.coordinator.records)
+            evaluations = list(self.coordinator.evaluations)
+            profile = self.coordinator.profile
+            result = await self.hass.async_add_executor_job(
+                self._calculate_result, records, evaluations, profile
+            )
+            self._cached_result = result
+            self.async_write_ha_state()
+            if not self._refresh_pending:
+                return
+
+    def _calculate_result(
+        self, records: list[dict[str, Any]], evaluations: list[dict[str, Any]], profile: str
+    ) -> dict[str, Any]:
+        if profile not in PROFILE_LEARNING_OPTIONS:
+            return {"schema_version": 1, "algorithm_version": "fallback_hierarchy_observer_v1", "status": "inactive_profile", "profile": profile, "observer_only": True, "forecast_influence_enabled": False, "native_resolution_minutes": 15, "production_model": "historical_baseline", "production_model_version": "0.4", "control_recency_half_life_days": 28.0, "control_hierarchy": ["weekday_quarter", "day_type_quarter", "quarter_of_day", "profile_mean"], "candidate_hierarchy": ["weekday_quarter", "day_type_quarter", "nearby_quarter_day_type", "same_hour_profile", "daypart_profile", "profile_global_median"], "evaluation_count": 0, "distinct_local_days": 0, "eligible_level_shadow_count": 0, "hierarchy_changed_selection_count": 0, "fallback_activation_counts": {}, "excluded_record_counts": {}, "control_metrics": {}, "candidate_metrics": {}, "per_level_metrics": {}, "day_type_daypart_metrics": {}, "early_late_metrics": {}, "preferred_candidate_hierarchy": ["weekday_quarter", "day_type_quarter", "nearby_quarter_day_type", "same_hour_profile", "daypart_profile", "profile_global_median"], "replay_candidate_supported": False, "promotion_ready": False, "live_shadow_required": True, "blockers": ["profile_unclassified"], "promotion_blockers": ["profile_unclassified", "live_shadow_required"], "calibration_fingerprint": None}
+        return calculate_fallback_hierarchy(records, evaluations, profile, dt_util.as_local)
 
     def _result(self) -> dict[str, Any]:
-        if self.coordinator.profile not in PROFILE_LEARNING_OPTIONS:
-            return {
-                "schema_version": 1,
-                "algorithm_version": "fallback_hierarchy_observer_v1",
-                "status": "inactive_profile",
-                "profile": self.coordinator.profile,
-                "observer_only": True,
-                "forecast_influence_enabled": False,
-                "native_resolution_minutes": 15,
-                "production_model": "historical_baseline",
-                "production_model_version": "0.4",
-                "control_recency_half_life_days": 28.0,
-                "control_hierarchy": ["weekday_quarter", "day_type_quarter", "quarter_of_day", "profile_mean"],
-                "candidate_hierarchy": ["weekday_quarter", "day_type_quarter", "nearby_quarter_day_type", "same_hour_profile", "daypart_profile", "profile_global_median"],
-                "evaluation_count": 0,
-                "distinct_local_days": 0,
-                "eligible_level_shadow_count": 0,
-                "hierarchy_changed_selection_count": 0,
-                "fallback_activation_counts": {},
-                "excluded_record_counts": {},
-                "control_metrics": {},
-                "candidate_metrics": {},
-                "per_level_metrics": {},
-                "day_type_daypart_metrics": {},
-                "early_late_metrics": {},
-                "preferred_candidate_hierarchy": ["weekday_quarter", "day_type_quarter", "nearby_quarter_day_type", "same_hour_profile", "daypart_profile", "profile_global_median"],
-                "replay_candidate_supported": False,
-                "promotion_ready": False,
-                "live_shadow_required": True,
-                "blockers": ["profile_unclassified"],
-                "promotion_blockers": ["profile_unclassified", "live_shadow_required"],
-                "calibration_fingerprint": None,
-            }
-        return calculate_fallback_hierarchy(
-            self.coordinator.records,
-            self.coordinator.evaluations,
-            self.coordinator.profile,
-            dt_util.as_local,
-        )
+        return self._cached_result or {"status": "initializing", "profile": self.coordinator.profile, "observer_only": True, "forecast_influence_enabled": False, "blockers": ["observer_calculation_pending"]}
 
     @property
     def native_value(self) -> str:
@@ -406,7 +396,6 @@ class DummyOSEnergyFallbackHierarchySensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._result())
-
 
 class DummyOSEnergyMeaningfulConfidenceSensor(SensorEntity):
     """Observer-only Step 11 meaningful-confidence diagnostics."""
@@ -422,37 +411,58 @@ class DummyOSEnergyMeaningfulConfidenceSensor(SensorEntity):
     def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
         self.coordinator = coordinator
         self._remove_listener = None
+        self._cached_result: dict[str, Any] | None = None
+        self._refresh_task = None
+        self._refresh_pending = False
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, "main")},
-            name=NAME,
-            manufacturer="Dummy OS",
-            model="Forecast Platform",
-            sw_version=VERSION,
-        )
+        return DeviceInfo(identifiers={(DOMAIN, "main")}, name=NAME, manufacturer="Dummy OS", model="Forecast Platform", sw_version=VERSION)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         self._remove_listener = self.coordinator.async_add_listener(self._handle_update)
+        self._schedule_refresh()
 
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener is not None:
             self._remove_listener()
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_task.cancel()
         await super().async_will_remove_from_hass()
 
     @callback
     def _handle_update(self) -> None:
-        self.async_write_ha_state()
+        self._schedule_refresh()
+
+    @callback
+    def _schedule_refresh(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_pending = True
+            return
+        self._refresh_task = self.hass.async_create_task(self._async_refresh_result())
+
+    async def _async_refresh_result(self) -> None:
+        while True:
+            self._refresh_pending = False
+            records = list(self.coordinator.records)
+            evaluations = list(self.coordinator.evaluations)
+            profile = self.coordinator.profile
+            result = await self.hass.async_add_executor_job(
+                self._calculate_result, records, evaluations, profile
+            )
+            self._cached_result = result
+            self.async_write_ha_state()
+            if not self._refresh_pending:
+                return
+
+    def _calculate_result(
+        self, records: list[dict[str, Any]], evaluations: list[dict[str, Any]], profile: str
+    ) -> dict[str, Any]:
+        return calculate_meaningful_confidence(records, evaluations, profile, dt_util.as_local)
 
     def _result(self) -> dict[str, Any]:
-        return calculate_meaningful_confidence(
-            self.coordinator.records,
-            self.coordinator.evaluations,
-            self.coordinator.profile,
-            dt_util.as_local,
-        )
+        return self._cached_result or {"status": "initializing", "profile": self.coordinator.profile, "observer_only": True, "forecast_influence_enabled": False, "blockers": ["observer_calculation_pending"]}
 
     @property
     def native_value(self) -> str:
@@ -461,7 +471,6 @@ class DummyOSEnergyMeaningfulConfidenceSensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._result())
-
 
 class DummyOSEnergyForecastQualityByHorizonSensor(SensorEntity):
     """Observer-only Step 12 quality by forecast horizon."""

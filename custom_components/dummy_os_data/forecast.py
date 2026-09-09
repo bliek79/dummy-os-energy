@@ -116,11 +116,6 @@ class HomeBaselineForecast:
 
     def profile_statistics(self, profile: str) -> dict[str, Any]:
         """Return compact historical statistics for one profile."""
-        if slot_count < 1 or slot_count > MAX_INTERNAL_FORECAST_SLOTS:
-            raise ValueError(
-                f"slot_count must be between 1 and {MAX_INTERNAL_FORECAST_SLOTS}"
-            )
-
         exact, day_type, quarter, all_values = self._history(profile)
         reference = dt_util.utcnow()
         weighted_mean = self._weighted_mean(all_values, reference)
@@ -167,6 +162,11 @@ class HomeBaselineForecast:
         time contract with unavailable values. This preserves planner-facing
         shape without silently borrowing Normal or Away history.
         """
+        if slot_count < 1 or slot_count > MAX_INTERNAL_FORECAST_SLOTS:
+            raise ValueError(
+                f"slot_count must be between 1 and {MAX_INTERNAL_FORECAST_SLOTS}"
+            )
+
         exact, day_type, quarter, all_values = self._history(profile)
         now_utc = dt_util.as_utc(now or dt_util.utcnow())
         now_local = dt_util.as_local(now_utc)
