@@ -1,0 +1,69 @@
+name: Apply pre-Step5 remaining main-thread fix v2
+
+on:
+  push:
+    branches:
+      - pre-step5-final-main-thread-fix
+    paths:
+      - .github/workflows/apply-pre-step5-final-main-thread-fix-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPYCACHEPREFIX: /tmp/dummy-os-pycache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: pre-step5-final-main-thread-fix
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pytest pyyaml
+      - name: Apply original targeted patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import yaml
+
+          workflow = yaml.safe_load(Path('.github/workflows/apply-pre-step5-final-main-thread-fix.yml').read_text())
+          steps = workflow['jobs']['apply-fix']['steps']
+          patch_step = next(step for step in steps if step.get('name') == 'Apply targeted async cache fix and alpha.8 metadata')
+          subprocess.run(['bash', '-lc', patch_step['run']], check=True)
+          PY
+      - name: Correct Solar identity contract test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tests/test_pre_step5_remaining_main_thread_fix.py')
+          text = p.read_text()
+          old = '''    for unique_id in ("do_solar_forecast_today_total", "do_solar_forecast_today_north", "do_solar_forecast_today_south"):\n        assert unique_id in (ROOT / "custom_components/dummy_os_data/solar_sensor.py").read_text()\n'''
+          new = '''    solar = (ROOT / "custom_components/dummy_os_data/solar_sensor.py").read_text()\n    for day, roof in (("today", "north"), ("today", "south"), ("today", "total"), ("tomorrow", "north"), ("tomorrow", "south"), ("tomorrow", "total")):\n        assert f'DummyOSSolarDailySensor(coordinator, "{day}", "{roof}")' in solar\n    assert 'object_id = f"do_solar_forecast_{day}_{roof}"' in solar\n'''
+          if old not in text:
+              raise SystemExit('expected failing Solar identity assertion not found')
+          p.write_text(text.replace(old, new, 1))
+          PY
+      - name: Validate targeted fix
+        run: |
+          python -m compileall -q custom_components/dummy_os_data tests
+          python -m pytest -q
+          python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
+          grep -F 'VERSION = "0.2.0-alpha.8"' custom_components/dummy_os_data/const.py
+          grep -F '"version": "0.2.0-alpha.8"' custom_components/dummy_os_data/manifest.json
+          grep -F '**Tag:** `0.2.0-alpha.8`' RELEASE_NOTES_0.2.0-alpha.8.md
+          test -z "$(git ls-files | grep -E '(__pycache__|\.pyc$)' || true)"
+      - name: Commit targeted fix
+        run: |
+          rm .github/workflows/apply-pre-step5-final-main-thread-fix.yml
+          rm .github/workflows/apply-pre-step5-final-main-thread-fix-v2.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Move remaining forecast quality and solar calculations off main thread"
+          git push origin HEAD:pre-step5-final-main-thread-fix
