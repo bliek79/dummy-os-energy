@@ -1,0 +1,47 @@
+name: Prepare alpha.5 release metadata
+
+on:
+  push:
+    branches:
+      - publish-0.2.0-alpha.5
+    paths:
+      - .github/workflows/prepare-alpha5-metadata.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: publish-0.2.0-alpha.5
+          fetch-depth: 0
+      - name: Align release consistency metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          test = Path('tests/test_release_consistency.py')
+          text = test.read_text()
+          old = 'VERSION = "0.2.0-alpha.4"'
+          new = 'VERSION = "0.2.0-alpha.5"'
+          if old not in text:
+              raise SystemExit('expected alpha.4 test version marker not found')
+          test.write_text(text.replace(old, new, 1))
+
+          notes = Path('RELEASE_NOTES.md')
+          release = Path('RELEASE_NOTES_0.2.0-alpha.5.md').read_text().rstrip()
+          current = notes.read_text()
+          marker = '**Tag:** `0.2.0-alpha.5`'
+          if marker not in current:
+              notes.write_text(release + '\n\n---\n' + current)
+          PY
+      - name: Commit metadata alignment
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_release_consistency.py RELEASE_NOTES.md
+          git diff --cached --quiet && exit 0
+          git commit -m "Align release metadata for 0.2.0-alpha.5"
+          git push origin HEAD:publish-0.2.0-alpha.5
