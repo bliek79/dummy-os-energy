@@ -58,6 +58,7 @@ def _blocked(base: dict[str, Any], blockers: list[str]) -> dict[str, Any]:
         "safety_charge_hour_count": 0,
         "free_above_reserve_kwh": None,
         "free_capacity_kwh": None,
+        "solar_surplus_ac_kwh": None,
         "solar_protection_kwh": None,
         "trade_charge_headroom_kwh": None,
         "best_import_avoidance": None,
@@ -218,15 +219,8 @@ def build_do_plan_preview(
     safety_schedule_sufficient = (not safety_charge_needed) or remaining_battery_kwh <= ENERGY_EPSILON_KWH
     safety_grid_input = reserve_deficit / charge_ratio if safety_charge_needed else 0.0
 
-    # Protect headroom for forecast solar surplus after usable solar returns.
+    # Preserve storage room for solar expected shortly after usable solar returns.
     free_capacity_kwh = capacity * max(100.0 - soc, 0.0) / 100.0
-    solar_window = [
-        row
-        for row in parsed_rows
-        if first_usable <= row["start"] < first_usable.replace() and False
-    ]
-    # datetime.replace() above is deliberately not used for window arithmetic;
-    # use timestamps below to stay DST-independent in UTC.
     solar_window_end_ts = first_usable.timestamp() + SOLAR_PROTECTION_HOURS * 3600
     solar_window = [
         row
@@ -237,8 +231,8 @@ def build_do_plan_preview(
     solar_protection_kwh = min(free_capacity_kwh, solar_surplus_ac_kwh * charge_ratio)
     trade_charge_headroom_kwh = max(free_capacity_kwh - solar_protection_kwh, 0.0)
 
-    # Financial pair search. Import avoidance and export trade are intentionally
-    # separate because import and export all-in prices are distinct contracts.
+    # Search separate import-avoidance and export-trade pairs. Import/export
+    # prices are never substituted for one another.
     best_import: dict[str, Any] | None = None
     best_export: dict[str, Any] | None = None
     for i, charge_row in enumerate(future_rows):
@@ -253,6 +247,7 @@ def build_do_plan_preview(
                 "avoided_import_price": round(discharge_row["import_price"], 6),
                 "effective_charge_cost_per_delivered_kwh": round(effective_delivered_cost, 6),
                 "margin_per_delivered_kwh": round(import_margin, 6),
+                "_margin": import_margin,
             }
             export_candidate = {
                 "charge_time": charge_row["start"].isoformat(),
@@ -261,11 +256,12 @@ def build_do_plan_preview(
                 "export_price": round(discharge_row["export_price"], 6),
                 "effective_charge_cost_per_exported_kwh": round(effective_delivered_cost, 6),
                 "margin_per_exported_kwh": round(export_margin, 6),
+                "_margin": export_margin,
             }
             if best_import is None or import_margin > best_import["_margin"]:
-                best_import = {**import_candidate, "_margin": import_margin}
+                best_import = import_candidate
             if best_export is None or export_margin > best_export["_margin"]:
-                best_export = {**export_candidate, "_margin": export_margin}
+                best_export = export_candidate
 
     if best_import is not None:
         best_import.pop("_margin", None)
