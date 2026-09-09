@@ -94,6 +94,17 @@ def aggregate_planner_hours(
         )
         confidences = [float(slot.confidence) for slot in populated]
         sources = Counter(str(slot.source) for slot in quarter_group)
+        quarter_payload = [
+            {
+                "index": quarter_index,
+                "start": slot.start.isoformat(),
+                "end": slot.end.isoformat(),
+                "energy_kwh": round(float(slot.energy_kwh), 6) if slot.energy_kwh is not None else None,
+                "source": str(slot.source),
+                "confidence": round(float(slot.confidence), 3),
+            }
+            for quarter_index, slot in enumerate(quarter_group)
+        ]
         hours.append(
             {
                 "index": hour_index,
@@ -109,6 +120,7 @@ def aggregate_planner_hours(
                 ),
                 "source_distribution": dict(sorted(sources.items())),
                 "profile": profile,
+                "quarters": quarter_payload,
             }
         )
 
