@@ -7,6 +7,7 @@ MIGRATIONS = (ROOT / "custom_components/dummy_os_data/entity_migrations.py").rea
 CONTRACT = (ROOT / "custom_components/dummy_os_data/forecast_planner_contract.py").read_text()
 FORECAST = (ROOT / "custom_components/dummy_os_data/forecast.py").read_text()
 
+
 def test_step15_canonical_sensor_and_registry_route():
     assert '_attr_name = "DO Energy Forecast Planner Contract"' in SENSOR
     assert '_attr_unique_id = "do_energy_forecast_planner_contract"' in SENSOR
@@ -15,12 +16,15 @@ def test_step15_canonical_sensor_and_registry_route():
     assert '("sensor", "do_energy_forecast_planner_contract", "sensor.do_energy_forecast_planner_contract")' in INIT
     assert '"do_energy_forecast_planner_contract": "sensor.dummy_os_forecast_do_energy_forecast_planner_contract"' in MIGRATIONS
 
+
 def test_step15_uses_shared_step13_and_step14_results():
     assert 'def _build_planner_hours_result(' in SENSOR
     assert 'def _build_model_health_result(' in SENSOR
-    assert 'build_forecast_planner_contract(' in SENSOR
-    assert 'return _build_planner_hours_result(self.coordinator)' in SENSOR
-    assert 'return _build_model_health_result(self.coordinator, self._forecast())' in SENSOR
+    assert 'def _build_contract_from_snapshot(' in SENSOR
+    assert 'planner_hours=_build_planner_hours_from_snapshot(snapshot)' in SENSOR
+    assert 'model_health=_build_model_health_from_snapshot(snapshot)' in SENSOR
+    assert 'class DummyOSEnergyForecastPlannerContractSensor(DummyOSAsyncPlannerResultSensor):' in SENSOR
+
 
 def test_step15_contract_is_versioned_and_model_agnostic():
     assert 'CONTRACT_NAME = "dummy_os_forecast_to_planner"' in CONTRACT
@@ -31,6 +35,7 @@ def test_step15_contract_is_versioned_and_model_agnostic():
     assert 'physical_execution_authority": False' in CONTRACT
     assert 'fallback_hierarchy' not in CONTRACT
     assert 'RECENCY_HALF_LIFE_DAYS' not in CONTRACT
+
 
 def test_native_forecast_contract_remains_step14_default():
     assert 'slot_count: int = FORECAST_SLOTS' in FORECAST
