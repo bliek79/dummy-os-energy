@@ -154,18 +154,57 @@ class DummyOSSolarDailySensor(DummyOSSolarBaseSensor):
         super().__init__(coordinator)
         self.day = day
         self.roof = roof
+        self._cached_value: float | None = None
+        self._refresh_task = None
+        self._refresh_pending = False
         object_id = f"do_solar_forecast_{day}_{roof}"
         self._attr_name = f"DO Solar Forecast {day.title()} {roof.title()}"
         self._attr_unique_id = object_id
         self._attr_suggested_object_id = object_id
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._schedule_refresh()
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_task.cancel()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_update(self) -> None:
+        self._schedule_refresh()
+
+    @callback
+    def _schedule_refresh(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_pending = True
+            return
+        self._refresh_task = self.solar.hass.async_create_task(self._async_refresh_value())
+
+    async def _async_refresh_value(self) -> None:
+        while True:
+            self._refresh_pending = False
+            points = list(self.solar.points)
+            local_today = dt_util.as_local(dt_util.utcnow()).date()
+            target = local_today if self.day == "today" else local_today + timedelta(days=1)
+            self._cached_value = await self.solar.hass.async_add_executor_job(
+                self._calculate_value, points, target, self.roof
+            )
+            self.async_write_ha_state()
+            if not self._refresh_pending:
+                return
+
+    @staticmethod
+    def _calculate_value(points, target, roof: str) -> float | None:
+        if not points:
+            return None
+        field = {"north": "north_kwh", "south": "south_kwh", "total": "total_kwh"}[roof]
+        return round(sum(getattr(point, field) for point in points if dt_util.as_local(point.start).date() == target), 3)
+
     @property
     def native_value(self) -> float | None:
-        if not self.solar.points:
-            return None
-        local_today = dt_util.as_local(dt_util.utcnow()).date()
-        target = local_today if self.day == "today" else local_today + timedelta(days=1)
-        return self.solar.energy_for_local_date(target, self.roof)
+        return self._cached_value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

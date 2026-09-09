@@ -408,6 +408,13 @@ def _build_model_health_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any
     )
 
 
+def _build_public_forecast_from_snapshot(snapshot: dict[str, Any]) -> list[Any]:
+    """Build the public 72-hour Energy forecast outside the HA main thread."""
+    return HomeBaselineForecast(snapshot["records"]).build(
+        snapshot["profile"], now=snapshot["now"]
+    )
+
+
 def _build_contract_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return build_forecast_planner_contract(
         planner_hours=_build_planner_hours_from_snapshot(snapshot),
@@ -676,7 +683,7 @@ class DummyOSPlanReserveSOCSensor(DummyOSPlanEnergyNeedSensor):
         return _build_reserve_from_snapshot(snapshot)
 
 
-class DummyOSHomeForecastNextQuarterSensor(DummyOSBaseSensor):
+class DummyOSHomeForecastNextQuarterSensor(DummyOSAsyncPlannerResultSensor):
     _attr_name = "DO Energy Forecast Next Quarter"
     _attr_unique_id = "do_energy_forecast_next_quarter"
     _attr_suggested_object_id = "do_energy_forecast_next_quarter"
@@ -684,26 +691,35 @@ class DummyOSHomeForecastNextQuarterSensor(DummyOSBaseSensor):
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_icon = "mdi:clock-fast"
 
-    @property
-    def native_value(self) -> float | None:
-        slots = self._forecast()
-        return slots[0].energy_kwh if slots else None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        slots = self._forecast()
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        slots = _build_public_forecast_from_snapshot(snapshot)
         if not slots:
-            return {"status": "unavailable", "profile": self.coordinator.profile}
+            return {"value": None, "status": "unavailable", "profile": snapshot["profile"]}
         slot = slots[0]
+        learnable = snapshot["profile"] in PROFILE_LEARNING_OPTIONS
         return {
-            "status": "ok" if self._profile_learnable and slot.energy_kwh is not None else ("profile_unclassified" if not self._profile_learnable else "unavailable"),
+            "value": slot.energy_kwh,
+            "status": "ok" if learnable and slot.energy_kwh is not None else ("profile_unclassified" if not learnable else "unavailable"),
             "period_start": slot.start.isoformat(),
             "period_end": slot.end.isoformat(),
-            "profile": self.coordinator.profile,
+            "profile": snapshot["profile"],
             "sample_count": slot.sample_count,
             "source": slot.source,
             "confidence": slot.confidence,
         }
+
+    def _initial_result(self) -> dict[str, Any]:
+        return {"value": None, "status": "initializing", "profile": self.coordinator.profile, "blockers": ["forecast_calculation_pending"]}
+
+    @property
+    def native_value(self) -> float | None:
+        return self._result().get("value")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        result = dict(self._result())
+        result.pop("value", None)
+        return result
 
 
 class DummyOSHomeForecastCoverageSensor(DummyOSBaseSensor):
@@ -736,26 +752,36 @@ class DummyOSHomeForecastCoverageSensor(DummyOSBaseSensor):
         }
 
 
-class DummyOSHomeForecastConfidenceSensor(DummyOSBaseSensor):
+class DummyOSHomeForecastConfidenceSensor(DummyOSAsyncPlannerResultSensor):
     _attr_name = "DO Energy Forecast Confidence"
     _attr_unique_id = "do_energy_forecast_confidence"
     _attr_suggested_object_id = "do_energy_forecast_confidence"
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_icon = "mdi:shield-check-outline"
 
-    @property
-    def native_value(self) -> float | None:
-        return HomeBaselineForecast.average_confidence(self._forecast())
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        slots = _build_public_forecast_from_snapshot(snapshot)
         return {
-            "status": "ok" if self._profile_learnable else "profile_unclassified",
-            "profile": self.coordinator.profile,
-            "slot_count": len(self._forecast()),
+            "value": HomeBaselineForecast.average_confidence(slots),
+            "status": "ok" if snapshot["profile"] in PROFILE_LEARNING_OPTIONS else "profile_unclassified",
+            "profile": snapshot["profile"],
+            "slot_count": len(slots),
             "model_version": "0.4",
             "confidence_basis": "historical_source_and_sample_support",
         }
+
+    def _initial_result(self) -> dict[str, Any]:
+        return {"value": None, "status": "initializing", "profile": self.coordinator.profile, "slot_count": 0, "model_version": "0.4", "confidence_basis": "historical_source_and_sample_support", "blockers": ["forecast_calculation_pending"]}
+
+    @property
+    def native_value(self) -> float | None:
+        return self._result().get("value")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        result = dict(self._result())
+        result.pop("value", None)
+        return result
 
 
 def _build_model_health_result(
@@ -883,7 +909,29 @@ class DummyOSWeatherBaseSensor(SensorEntity):
         self.async_write_ha_state()
 
 
-class DummyOSHomeForecastQualityByDaypartSensor(DummyOSBaseSensor):
+class DummyOSAsyncQualitySensor(DummyOSAsyncPlannerResultSensor):
+    """Executor-backed base for expensive observer-only quality diagnostics."""
+
+    _empty_collection_key = "items"
+    _initial_extra: dict[str, Any] = {}
+
+    def _initial_result(self) -> dict[str, Any]:
+        result = {
+            "status": "initializing",
+            "profile": self.coordinator.profile,
+            "minimum_samples_for_sufficient_basis": 32,
+            self._empty_collection_key: {},
+            "blockers": ["quality_calculation_pending"],
+        }
+        result.update(self._initial_extra)
+        return result
+
+    @property
+    def _quality(self) -> dict[str, Any]:
+        return self._result()
+
+
+class DummyOSHomeForecastQualityByDaypartSensor(DummyOSAsyncQualitySensor):
     """Observer-only Energy forecast quality split by fixed local dayparts."""
 
     _attr_name = "DO Energy Forecast Quality By Daypart"
@@ -891,11 +939,13 @@ class DummyOSHomeForecastQualityByDaypartSensor(DummyOSBaseSensor):
     _attr_suggested_object_id = "do_energy_forecast_quality_by_daypart"
     _attr_icon = "mdi:chart-timeline-variant"
 
-    @property
-    def _quality(self) -> dict[str, Any]:
-        if not self._profile_learnable:
-            return {"status": "blocked", "profile": self.coordinator.profile, "minimum_samples_for_sufficient_basis": 32, "dayparts": {}, "blockers": ["profile_unclassified"]}
-        return calculate_daypart_quality(self.coordinator.evaluations, self.coordinator.records, self.coordinator.profile, dt_util.as_local)
+    _empty_collection_key = "dayparts"
+
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        profile = snapshot["profile"]
+        if profile not in PROFILE_LEARNING_OPTIONS:
+            return {"status": "blocked", "profile": profile, "minimum_samples_for_sufficient_basis": 32, "dayparts": {}, "blockers": ["profile_unclassified"]}
+        return calculate_daypart_quality(snapshot["evaluations"], snapshot["records"], profile, dt_util.as_local)
 
     @property
     def native_value(self) -> str:
@@ -907,17 +957,19 @@ class DummyOSHomeForecastQualityByDaypartSensor(DummyOSBaseSensor):
         return {"profile": quality["profile"], "observer_only": True, "resolution_minutes": 15, "minimum_samples_for_sufficient_basis": quality["minimum_samples_for_sufficient_basis"], "daypart_basis": "local_quarter_start", "dayparts": quality["dayparts"], "blockers": quality.get("blockers", [])}
 
 
-class DummyOSHomeForecastQualityByDayTypeSensor(DummyOSBaseSensor):
+class DummyOSHomeForecastQualityByDayTypeSensor(DummyOSAsyncQualitySensor):
     _attr_name = "DO Energy Forecast Quality By Day Type"
     _attr_unique_id = "do_energy_forecast_quality_by_day_type"
     _attr_suggested_object_id = "do_energy_forecast_quality_by_day_type"
     _attr_icon = "mdi:calendar-week"
 
-    @property
-    def _quality(self) -> dict[str, Any]:
-        if not self._profile_learnable:
-            return {"status": "blocked", "profile": self.coordinator.profile, "minimum_samples_for_sufficient_basis": 32, "day_types": {}, "blockers": ["profile_unclassified"]}
-        return calculate_day_type_quality(self.coordinator.evaluations, self.coordinator.records, self.coordinator.profile, dt_util.as_local)
+    _empty_collection_key = "day_types"
+
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        profile = snapshot["profile"]
+        if profile not in PROFILE_LEARNING_OPTIONS:
+            return {"status": "blocked", "profile": profile, "minimum_samples_for_sufficient_basis": 32, "day_types": {}, "blockers": ["profile_unclassified"]}
+        return calculate_day_type_quality(snapshot["evaluations"], snapshot["records"], profile, dt_util.as_local)
 
     @property
     def native_value(self) -> str:
@@ -929,7 +981,7 @@ class DummyOSHomeForecastQualityByDayTypeSensor(DummyOSBaseSensor):
         return {"profile": q["profile"], "observer_only": True, "resolution_minutes": 15, "minimum_samples_for_sufficient_basis": q["minimum_samples_for_sufficient_basis"], "day_type_basis": "local_quarter_start_weekday_weekend", "day_types": q["day_types"], "blockers": q.get("blockers", [])}
 
 
-class DummyOSHomeForecastQualityByDayTypeAndDaypartSensor(DummyOSBaseSensor):
+class DummyOSHomeForecastQualityByDayTypeAndDaypartSensor(DummyOSAsyncQualitySensor):
     """Observer-only Energy forecast quality by day type and daypart."""
 
     _attr_name = "DO Energy Forecast Quality By Day Type And Daypart"
@@ -937,11 +989,13 @@ class DummyOSHomeForecastQualityByDayTypeAndDaypartSensor(DummyOSBaseSensor):
     _attr_suggested_object_id = "do_energy_forecast_quality_by_day_type_and_daypart"
     _attr_icon = "mdi:calendar-clock"
 
-    @property
-    def _quality(self) -> dict[str, Any]:
-        if not self._profile_learnable:
-            return {"status": "blocked", "profile": self.coordinator.profile, "minimum_samples_for_sufficient_basis": 32, "combinations": {}, "blockers": ["profile_unclassified"]}
-        return calculate_day_type_daypart_quality(self.coordinator.evaluations, self.coordinator.records, self.coordinator.profile, dt_util.as_local)
+    _empty_collection_key = "combinations"
+
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        profile = snapshot["profile"]
+        if profile not in PROFILE_LEARNING_OPTIONS:
+            return {"status": "blocked", "profile": profile, "minimum_samples_for_sufficient_basis": 32, "combinations": {}, "blockers": ["profile_unclassified"]}
+        return calculate_day_type_daypart_quality(snapshot["evaluations"], snapshot["records"], profile, dt_util.as_local)
 
     @property
     def native_value(self) -> str:
@@ -953,7 +1007,7 @@ class DummyOSHomeForecastQualityByDayTypeAndDaypartSensor(DummyOSBaseSensor):
         return {"profile": q["profile"], "observer_only": True, "resolution_minutes": 15, "minimum_samples_for_sufficient_basis": q["minimum_samples_for_sufficient_basis"], "combination_basis": "local_quarter_start_day_type_and_daypart", "combinations": q["combinations"], "blockers": q.get("blockers", [])}
 
 
-class DummyOSHomeForecastQualityByHourSensor(DummyOSBaseSensor):
+class DummyOSHomeForecastQualityByHourSensor(DummyOSAsyncQualitySensor):
     """Observer-only Energy forecast quality per local afternoon hour."""
 
     _attr_name = "DO Energy Forecast Quality By Hour"
@@ -961,11 +1015,14 @@ class DummyOSHomeForecastQualityByHourSensor(DummyOSBaseSensor):
     _attr_suggested_object_id = "do_energy_forecast_quality_by_hour"
     _attr_icon = "mdi:clock-outline"
 
-    @property
-    def _quality(self) -> dict[str, Any]:
-        if not self._profile_learnable:
-            return {"status": "blocked", "profile": self.coordinator.profile, "minimum_samples_for_sufficient_basis": 32, "scope": "afternoon_12_18", "hours": {}, "blockers": ["profile_unclassified"]}
-        return calculate_hour_quality(self.coordinator.evaluations, self.coordinator.records, self.coordinator.profile, dt_util.as_local)
+    _empty_collection_key = "hours"
+    _initial_extra = {"scope": "afternoon_12_18"}
+
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        profile = snapshot["profile"]
+        if profile not in PROFILE_LEARNING_OPTIONS:
+            return {"status": "blocked", "profile": profile, "minimum_samples_for_sufficient_basis": 32, "scope": "afternoon_12_18", "hours": {}, "blockers": ["profile_unclassified"]}
+        return calculate_hour_quality(snapshot["evaluations"], snapshot["records"], profile, dt_util.as_local)
 
     @property
     def native_value(self) -> str:
