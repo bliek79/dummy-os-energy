@@ -1,0 +1,41 @@
+name: Cleanup alpha.6 release notes
+
+on:
+  push:
+    branches:
+      - publish-0.2.0-alpha.6
+    paths:
+      - .github/alpha6-cleanup-trigger.txt
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: publish-0.2.0-alpha.6
+          fetch-depth: 0
+      - name: Remove duplicate alpha.6 release block
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('RELEASE_NOTES.md')
+          text = p.read_text()
+          marker = '# GitHub Release\n\n**Tag:** `0.2.0-alpha.6`'
+          first = text.find(marker)
+          second = text.find(marker, first + 1) if first >= 0 else -1
+          if second >= 0:
+              third = text.find('# GitHub Release\n\n**Tag:** `0.2.0-alpha.5`', second)
+              if third < 0:
+                  raise SystemExit('alpha.5 history marker not found')
+              text = text[:second] + text[third:]
+              p.write_text(text)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add RELEASE_NOTES.md
+          git diff --cached --quiet || git commit -m "Remove duplicate alpha.6 release notes"
+          git push origin HEAD:publish-0.2.0-alpha.6
