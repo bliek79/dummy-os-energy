@@ -49,22 +49,31 @@ def _blocked(base: dict[str, Any], blockers: list[str]) -> dict[str, Any]:
         "valid": False,
         "reason": blockers[0],
         "blockers": sorted(set(blockers)),
-        "decision": "wait",
+        "preview_decision": "blocked",
         "safety_charge_needed": None,
-        "safety_charge_battery_kwh": None,
-        "safety_charge_grid_input_kwh": None,
-        "safety_schedule_sufficient": None,
         "safety_charge_hours": [],
         "safety_charge_hour_count": 0,
-        "free_above_reserve_kwh": None,
+        "safety_schedule_sufficient": None,
+        "safety_unallocated_battery_kwh": None,
+        "required_grid_input_kwh": None,
+        "max_deliverable_from_free_kwh": None,
         "free_capacity_kwh": None,
-        "solar_surplus_ac_kwh": None,
-        "solar_protection_kwh": None,
-        "trade_charge_headroom_kwh": None,
-        "best_import_avoidance": None,
-        "best_export_trade": None,
-        "best_trade_type": None,
-        "best_trade_margin": None,
+        "price_min_import": None,
+        "price_max_import": None,
+        "price_spread_import": None,
+        "best_self_use_charge_time": None,
+        "best_self_use_charge_price": None,
+        "best_self_use_discharge_time": None,
+        "best_self_use_discharge_import_price": None,
+        "best_self_use_margin": None,
+        "best_export_charge_time": None,
+        "best_export_charge_price": None,
+        "best_export_discharge_time": None,
+        "best_export_discharge_export_price": None,
+        "best_export_margin": None,
+        "self_use_trade_profitable": False,
+        "export_trade_profitable": False,
+        "solar_capacity_protection": False,
     }
 
 
@@ -79,11 +88,11 @@ def build_do_plan_preview(
     max_charge_power_w: int = DEFAULT_MAX_CHARGE_POWER_W,
     max_discharge_power_w: int = DEFAULT_MAX_DISCHARGE_POWER_W,
 ) -> dict[str, Any]:
-    """Build an observer-only safety/financial preview from Steps 1-3.
+    """Build the Step-4 observer-only safety and financial preview.
 
-    Step 3 remains the sole source of protected reserve position. This layer
-    applies efficiencies only to action economics and charge requirements; it
-    never recalculates the protected reserve target and never executes actions.
+    Step 3 remains the sole source of protected reserve position. Step 4 only
+    applies efficiency, price and power constraints to diagnostic candidates;
+    it never recalculates reserve-SOC and never performs physical execution.
     """
     now_utc = _utc(now)
     charge_eff = _finite(charge_efficiency_percent, non_negative=True)
@@ -92,16 +101,18 @@ def build_do_plan_preview(
 
     base = {
         "input_status": input_result.get("status"),
-        "input_rows_signature": input_result.get("rows_signature"),
         "reserve_status": reserve_result.get("status"),
-        "reserve_reason": reserve_result.get("reason"),
+        "input_rows_signature": input_result.get("rows_signature"),
         "first_usable_solar": reserve_result.get("first_usable_solar"),
+        "soc_percent": reserve_result.get("soc_percent"),
         "reserve_soc_target_percent": reserve_result.get("reserve_soc_target_percent"),
-        "reserve_deficit_kwh": reserve_result.get("reserve_deficit_kwh"),
+        "reserve_deficit_battery_kwh": reserve_result.get("reserve_deficit_kwh"),
+        "free_above_reserve_battery_kwh": reserve_result.get("free_above_reserve_kwh"),
         "shadow_only": True,
         "active_use_permitted": False,
         "physical_execution_authority": False,
-        "calculation_scope": "observer_only_safety_and_financial_preview",
+        "calculation_scope": "planner_preview_only",
+        "losses_included": True,
         "reserve_source": "do_plan_reserve_soc",
         "reserve_recalculated": False,
         "prices_fallback_used": False,
@@ -134,6 +145,7 @@ def build_do_plan_preview(
 
     capacity = _finite(reserve_result.get("battery_capacity_kwh"), non_negative=True)
     soc = _finite(reserve_result.get("soc_percent"), non_negative=True)
+    reserve_target = _finite(reserve_result.get("reserve_soc_target_percent"), non_negative=True)
     reserve_deficit = _finite(reserve_result.get("reserve_deficit_kwh"), non_negative=True)
     free_above_reserve = _finite(reserve_result.get("free_above_reserve_kwh"), non_negative=True)
     first_usable = _utc(reserve_result.get("first_usable_solar"))
@@ -141,6 +153,8 @@ def build_do_plan_preview(
         blockers.append("battery_capacity_invalid")
     if soc is None or soc > 100:
         blockers.append("soc_invalid")
+    if reserve_target is None or reserve_target > 100:
+        blockers.append("reserve_soc_target_invalid")
     if reserve_deficit is None:
         blockers.append("reserve_deficit_invalid")
     if free_above_reserve is None:
@@ -180,16 +194,16 @@ def build_do_plan_preview(
 
     assert now_utc is not None
     assert charge_eff is not None and discharge_eff is not None and min_margin is not None
-    assert capacity is not None and soc is not None
+    assert capacity is not None and soc is not None and reserve_target is not None
     assert reserve_deficit is not None and free_above_reserve is not None and first_usable is not None
+
     charge_ratio = charge_eff / 100.0
     discharge_ratio = discharge_eff / 100.0
     roundtrip_ratio = charge_ratio * discharge_ratio
-
     current_hour = now_utc.replace(minute=0, second=0, microsecond=0)
     future_rows = [row for row in parsed_rows if row["end"] > now_utc]
 
-    # Safety charge: fill only the Step-3 reserve deficit and only before usable solar.
+    # Safety-charge preview: Step-3 reserve deficit is authoritative.
     safety_charge_needed = reserve_deficit > ENERGY_EPSILON_KWH
     remaining_battery_kwh = reserve_deficit
     safety_hours: list[dict[str, Any]] = []
@@ -198,106 +212,153 @@ def build_do_plan_preview(
     for row in safety_candidates:
         if remaining_battery_kwh <= ENERGY_EPSILON_KWH:
             break
-        fraction = 1.0
+        available_fraction = 1.0
         if row["start"] <= now_utc < row["end"]:
-            fraction = max(0.0, min(1.0, (row["end"] - now_utc).total_seconds() / 3600.0))
-        battery_capacity_kwh = max_charge_power_w / 1000.0 * fraction * charge_ratio
-        if battery_capacity_kwh <= 0:
+            available_fraction = max(
+                0.0,
+                min(1.0, (row["end"] - now_utc).total_seconds() / 3600.0),
+            )
+        max_battery_energy = max_charge_power_w / 1000.0 * available_fraction * charge_ratio
+        if max_battery_energy <= 0:
             continue
-        battery_allocated = min(remaining_battery_kwh, battery_capacity_kwh)
-        grid_input = battery_allocated / charge_ratio
+        battery_energy = min(remaining_battery_kwh, max_battery_energy)
+        grid_input = battery_energy / charge_ratio
         safety_hours.append(
             {
                 "start": row["start"].isoformat(),
                 "end": row["end"].isoformat(),
                 "import_price": round(row["import_price"], 6),
-                "battery_energy_kwh": round(battery_allocated, 3),
-                "grid_input_kwh": round(grid_input, 3),
+                "available_hour_fraction": round(available_fraction, 6),
+                "max_battery_energy_kwh": round(max_battery_energy, 3),
+                "candidate_battery_energy_kwh": round(battery_energy, 3),
+                "required_grid_input_kwh": round(grid_input, 3),
             }
         )
-        remaining_battery_kwh -= battery_allocated
-    safety_schedule_sufficient = (not safety_charge_needed) or remaining_battery_kwh <= ENERGY_EPSILON_KWH
-    safety_grid_input = reserve_deficit / charge_ratio if safety_charge_needed else 0.0
+        remaining_battery_kwh -= battery_energy
 
-    # Preserve storage room for solar expected shortly after usable solar returns.
+    safety_unallocated = max(remaining_battery_kwh, 0.0)
+    safety_schedule_sufficient = (
+        not safety_charge_needed or safety_unallocated <= ENERGY_EPSILON_KWH
+    )
+    required_grid_input = reserve_deficit / charge_ratio if safety_charge_needed else 0.0
+
+    # Reserve-free energy may be considered for discharge only after losses.
+    max_deliverable_from_free = free_above_reserve * discharge_ratio
+    discharge_allowed = (
+        not safety_charge_needed
+        and free_above_reserve > ENERGY_EPSILON_KWH
+        and soc > reserve_target
+    )
+
+    # Solar-capacity protection is a temporary conservative Step-4 gate.
     free_capacity_kwh = capacity * max(100.0 - soc, 0.0) / 100.0
+    solar_capacity_protection = (
+        not safety_charge_needed
+        and first_usable > now_utc
+        and free_capacity_kwh > ENERGY_EPSILON_KWH
+    )
     solar_window_end_ts = first_usable.timestamp() + SOLAR_PROTECTION_HOURS * 3600
     solar_window = [
         row
         for row in parsed_rows
         if first_usable <= row["start"] and row["start"].timestamp() < solar_window_end_ts
     ]
-    solar_surplus_ac_kwh = sum(max(row["solar_kwh"] - row["home_kwh"], 0.0) for row in solar_window)
-    solar_protection_kwh = min(free_capacity_kwh, solar_surplus_ac_kwh * charge_ratio)
-    trade_charge_headroom_kwh = max(free_capacity_kwh - solar_protection_kwh, 0.0)
+    solar_surplus_ac_kwh = sum(
+        max(row["solar_kwh"] - row["home_kwh"], 0.0) for row in solar_window
+    )
 
-    # Search separate import-avoidance and export-trade pairs. Import/export
-    # prices are never substituted for one another.
-    best_import: dict[str, Any] | None = None
+    # Price diagnostics.
+    import_prices = [row["import_price"] for row in future_rows]
+    price_min_import = min(import_prices) if import_prices else None
+    price_max_import = max(import_prices) if import_prices else None
+    price_spread_import = (
+        price_max_import - price_min_import
+        if price_min_import is not None and price_max_import is not None
+        else None
+    )
+
+    # Separate self-use and export pair searches. No import/export substitution.
+    best_self_use: dict[str, Any] | None = None
     best_export: dict[str, Any] | None = None
     for i, charge_row in enumerate(future_rows):
-        effective_delivered_cost = charge_row["import_price"] / roundtrip_ratio
+        effective_cost = charge_row["import_price"] / roundtrip_ratio
         for discharge_row in future_rows[i + 1 :]:
-            import_margin = discharge_row["import_price"] - effective_delivered_cost
-            export_margin = discharge_row["export_price"] - effective_delivered_cost
-            import_candidate = {
-                "charge_time": charge_row["start"].isoformat(),
-                "discharge_time": discharge_row["start"].isoformat(),
-                "charge_import_price": round(charge_row["import_price"], 6),
-                "avoided_import_price": round(discharge_row["import_price"], 6),
-                "effective_charge_cost_per_delivered_kwh": round(effective_delivered_cost, 6),
-                "margin_per_delivered_kwh": round(import_margin, 6),
-                "_margin": import_margin,
-            }
-            export_candidate = {
-                "charge_time": charge_row["start"].isoformat(),
-                "discharge_time": discharge_row["start"].isoformat(),
-                "charge_import_price": round(charge_row["import_price"], 6),
-                "export_price": round(discharge_row["export_price"], 6),
-                "effective_charge_cost_per_exported_kwh": round(effective_delivered_cost, 6),
-                "margin_per_exported_kwh": round(export_margin, 6),
-                "_margin": export_margin,
-            }
-            if best_import is None or import_margin > best_import["_margin"]:
-                best_import = import_candidate
-            if best_export is None or export_margin > best_export["_margin"]:
-                best_export = export_candidate
+            self_use_margin = discharge_row["import_price"] - effective_cost
+            export_margin = discharge_row["export_price"] - effective_cost
+            if best_self_use is None or self_use_margin > best_self_use["margin"]:
+                best_self_use = {
+                    "charge_time": charge_row["start"],
+                    "charge_price": charge_row["import_price"],
+                    "discharge_time": discharge_row["start"],
+                    "discharge_price": discharge_row["import_price"],
+                    "effective_cost": effective_cost,
+                    "margin": self_use_margin,
+                }
+            if best_export is None or export_margin > best_export["margin"]:
+                best_export = {
+                    "charge_time": charge_row["start"],
+                    "charge_price": charge_row["import_price"],
+                    "discharge_time": discharge_row["start"],
+                    "discharge_price": discharge_row["export_price"],
+                    "effective_cost": effective_cost,
+                    "margin": export_margin,
+                }
 
-    if best_import is not None:
-        best_import.pop("_margin", None)
-    if best_export is not None:
-        best_export.pop("_margin", None)
+    self_use_profitable = bool(
+        best_self_use is not None and best_self_use["margin"] >= min_margin
+    )
+    export_profitable = bool(
+        best_export is not None and best_export["margin"] >= min_margin
+    )
 
-    import_margin = best_import["margin_per_delivered_kwh"] if best_import else None
-    export_margin = best_export["margin_per_exported_kwh"] if best_export else None
-    import_profitable = import_margin is not None and import_margin >= min_margin
-    export_profitable = export_margin is not None and export_margin >= min_margin
-
-    best_trade_type = None
-    best_trade_margin = None
-    if import_profitable or export_profitable:
-        if export_profitable and (not import_profitable or float(export_margin) > float(import_margin)):
-            best_trade_type = "export_trade"
-            best_trade_margin = float(export_margin)
-        else:
-            best_trade_type = "import_avoidance"
-            best_trade_margin = float(import_margin)
+    current_is_self_use_discharge = bool(
+        best_self_use is not None
+        and best_self_use["discharge_time"] == current_hour
+        and self_use_profitable
+    )
+    current_is_export_discharge = bool(
+        best_export is not None
+        and best_export["discharge_time"] == current_hour
+        and export_profitable
+    )
+    current_is_best_charge = bool(
+        (
+            best_self_use is not None
+            and best_self_use["charge_time"] == current_hour
+            and self_use_profitable
+        )
+        or (
+            best_export is not None
+            and best_export["charge_time"] == current_hour
+            and export_profitable
+        )
+    )
 
     if safety_charge_needed:
-        decision = "safety_charge" if safety_schedule_sufficient else "safety_charge_insufficient_window"
-        reason = "reserve_deficit_has_priority"
-    elif solar_protection_kwh > ENERGY_EPSILON_KWH and trade_charge_headroom_kwh <= ENERGY_EPSILON_KWH:
-        decision = "hold_capacity_for_solar"
-        reason = "forecast_solar_surplus_uses_available_headroom"
-    elif best_trade_type is not None and trade_charge_headroom_kwh > ENERGY_EPSILON_KWH:
-        decision = best_trade_type
-        reason = "financial_margin_above_threshold"
-    elif free_above_reserve > ENERGY_EPSILON_KWH and best_trade_type is not None:
-        decision = "discharge_opportunity"
-        reason = "energy_above_protected_reserve_and_profitable_future_value"
+        preview_decision = "safety_charge_preview"
+        reason = (
+            "reserve_deficit_can_be_allocated_before_usable_solar"
+            if safety_schedule_sufficient
+            else "reserve_deficit_exceeds_available_pre_solar_charge_window"
+        )
+    elif discharge_allowed and current_is_self_use_discharge:
+        preview_decision = "discharge_self_use_preview"
+        reason = "current_hour_best_self_use_discharge_candidate"
+    elif discharge_allowed and current_is_export_discharge:
+        preview_decision = "export_trade_preview"
+        reason = "current_hour_best_export_discharge_candidate"
+    elif current_is_best_charge and not solar_capacity_protection:
+        preview_decision = "trade_charge_preview"
+        reason = "current_hour_best_profitable_charge_candidate"
+    elif solar_capacity_protection:
+        preview_decision = "wait_for_solar"
+        reason = "preserve_free_capacity_for_expected_usable_solar"
+    elif self_use_profitable or export_profitable:
+        preview_decision = "wait_for_later_candidate"
+        reason = "profitable_pair_exists_but_current_hour_not_leading"
     else:
-        decision = "wait"
-        reason = "no_priority_action_candidate"
+        preview_decision = "no_action"
+        reason = "no_safety_need_and_no_profitable_pair"
 
     return {
         **base,
@@ -305,29 +366,38 @@ def build_do_plan_preview(
         "valid": True,
         "reason": reason,
         "blockers": [],
-        "decision": decision,
+        "preview_decision": preview_decision,
+        "required_grid_input_kwh": round(required_grid_input, 3),
+        "safety_charge_needed": safety_charge_needed,
+        "safety_charge_hours": safety_hours,
+        "safety_charge_hour_count": len(safety_hours),
+        "safety_schedule_sufficient": safety_schedule_sufficient,
+        "safety_unallocated_battery_kwh": round(safety_unallocated, 3),
+        "free_capacity_kwh": round(free_capacity_kwh, 3),
+        "max_deliverable_from_free_kwh": round(max_deliverable_from_free, 3),
         "charge_efficiency_percent": round(charge_eff, 3),
         "discharge_efficiency_percent": round(discharge_eff, 3),
         "roundtrip_efficiency_percent": round(roundtrip_ratio * 100.0, 3),
         "minimum_trade_margin": round(min_margin, 6),
         "max_charge_power_w": int(max_charge_power_w),
         "max_discharge_power_w": int(max_discharge_power_w),
-        "safety_charge_needed": safety_charge_needed,
-        "safety_charge_battery_kwh": round(reserve_deficit, 3),
-        "safety_charge_grid_input_kwh": round(safety_grid_input, 3),
-        "safety_schedule_sufficient": safety_schedule_sufficient,
-        "safety_charge_hours": safety_hours,
-        "safety_charge_hour_count": len(safety_hours),
-        "free_above_reserve_kwh": round(free_above_reserve, 3),
-        "free_capacity_kwh": round(free_capacity_kwh, 3),
-        "solar_surplus_ac_kwh": round(solar_surplus_ac_kwh, 3),
-        "solar_protection_kwh": round(solar_protection_kwh, 3),
-        "trade_charge_headroom_kwh": round(trade_charge_headroom_kwh, 3),
-        "best_import_avoidance": best_import,
-        "best_export_trade": best_export,
-        "import_avoidance_profitable": import_profitable,
+        "price_min_import": round(price_min_import, 6) if price_min_import is not None else None,
+        "price_max_import": round(price_max_import, 6) if price_max_import is not None else None,
+        "price_spread_import": round(price_spread_import, 6) if price_spread_import is not None else None,
+        "best_self_use_charge_time": best_self_use["charge_time"].isoformat() if best_self_use else None,
+        "best_self_use_charge_price": round(best_self_use["charge_price"], 6) if best_self_use else None,
+        "best_self_use_discharge_time": best_self_use["discharge_time"].isoformat() if best_self_use else None,
+        "best_self_use_discharge_import_price": round(best_self_use["discharge_price"], 6) if best_self_use else None,
+        "best_self_use_margin": round(best_self_use["margin"], 6) if best_self_use else None,
+        "best_export_charge_time": best_export["charge_time"].isoformat() if best_export else None,
+        "best_export_charge_price": round(best_export["charge_price"], 6) if best_export else None,
+        "best_export_discharge_time": best_export["discharge_time"].isoformat() if best_export else None,
+        "best_export_discharge_export_price": round(best_export["discharge_price"], 6) if best_export else None,
+        "best_export_margin": round(best_export["margin"], 6) if best_export else None,
+        "self_use_trade_profitable": self_use_profitable,
         "export_trade_profitable": export_profitable,
-        "best_trade_type": best_trade_type,
-        "best_trade_margin": round(best_trade_margin, 6) if best_trade_margin is not None else None,
+        "solar_capacity_protection": solar_capacity_protection,
+        "solar_surplus_ac_kwh": round(solar_surplus_ac_kwh, 3),
+        "discharge_preview_allowed": discharge_allowed,
         "current_hour": current_hour.isoformat(),
     }
