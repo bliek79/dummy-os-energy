@@ -40,6 +40,7 @@ from .model_health import calculate_model_health_readiness
 from .forecast_planner_contract import build_forecast_planner_contract
 from .do_plan_input import build_do_plan_input_72h
 from .do_plan_energy_need import build_do_plan_energy_need
+from .do_plan_reserve_soc import build_do_plan_reserve_soc
 from .planner_hours import (
     aggregate_planner_hours,
     required_generated_slot_count,
@@ -77,6 +78,7 @@ async def async_setup_entry(
             DummyOSEnergyForecastPlannerContractSensor(coordinator),
             DummyOSPlanInput72hSensor(coordinator),
             DummyOSPlanEnergyNeedSensor(coordinator),
+            DummyOSPlanReserveSOCSensor(coordinator),
             DummyOSHomeForecastNextQuarterSensor(coordinator),
             DummyOSHomeForecastCoverageSensor(coordinator),
             DummyOSHomeForecastConfidenceSensor(coordinator),
@@ -543,6 +545,23 @@ class DummyOSPlanEnergyNeedSensor(DummyOSBaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._result())
+
+
+class DummyOSPlanReserveSOCSensor(DummyOSPlanEnergyNeedSensor):
+    """Observer-only protected reserve-SOC position derived from Step 2."""
+
+    _attr_name = "DO Plan Reserve SOC"
+    _attr_unique_id = "do_plan_reserve_soc"
+    _attr_suggested_object_id = "do_plan_reserve_soc"
+    _attr_icon = "mdi:battery-lock-outline"
+
+    def _result(self) -> dict[str, Any]:
+        energy_need_result = super()._result()
+        result = build_do_plan_reserve_soc(energy_need_result=energy_need_result)
+        result["energy_need_entity"] = "sensor.do_plan_energy_need"
+        result["soc_source_entity"] = energy_need_result.get("soc_source_entity")
+        result["source_layer_status"] = energy_need_result.get("source_layer_status")
+        return result
 
 
 class DummyOSHomeForecastNextQuarterSensor(DummyOSBaseSensor):
