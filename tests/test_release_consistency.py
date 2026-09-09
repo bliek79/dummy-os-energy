@@ -18,7 +18,7 @@ SOLAR_GENERATED_ENTITY_ID_ALIASES = MIGRATION_MODULE.SOLAR_GENERATED_ENTITY_ID_A
 DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES = MIGRATION_MODULE.DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES
 OBSOLETE_HOME_INPUT_ENTITY_ALIASES = MIGRATION_MODULE.OBSOLETE_HOME_INPUT_ENTITY_ALIASES
 
-VERSION = "0.2.0-alpha.8"
+VERSION = "0.2.0-alpha.9"
 
 EXPECTED_SOLAR_ENTITY_ID_ALIASES = {
     "do_solar_status": "sensor.dummy_os_solar_source_status",
@@ -178,12 +178,12 @@ class ReleaseConsistencyTests(unittest.TestCase):
 
     def test_observer_runtime_names_are_explicit_and_canonical(self) -> None:
         sensor_source = (ROOT / "custom_components/dummy_os_data/sensor.py").read_text()
-        for class_name, expected_name in (
-            ("DummyOSEnergyPeakLearningSensor", "DO Energy Peak Learning"),
-            ("DummyOSEnergyTimeWindowsSensor", "DO Energy Time Windows"),
-            ("DummyOSEnergyRecencyWeightingSensor", "DO Energy Recency Weighting"),
+        for class_name, base_class, expected_name in (
+            ("DummyOSEnergyPeakLearningSensor", "DummyOSAsyncPlannerResultSensor", "DO Energy Peak Learning"),
+            ("DummyOSEnergyTimeWindowsSensor", "DummyOSBaseSensor", "DO Energy Time Windows"),
+            ("DummyOSEnergyRecencyWeightingSensor", "DummyOSBaseSensor", "DO Energy Recency Weighting"),
         ):
-            start = sensor_source.index(f"class {class_name}(DummyOSBaseSensor):")
+            start = sensor_source.index(f"class {class_name}({base_class}):")
             next_class = sensor_source.find("\n\nclass ", start + 1)
             block = sensor_source[start:] if next_class == -1 else sensor_source[start:next_class]
             self.assertIn(f'_attr_name = "{expected_name}"', block)
