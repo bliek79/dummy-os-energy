@@ -722,34 +722,52 @@ class DummyOSHomeForecastNextQuarterSensor(DummyOSAsyncPlannerResultSensor):
         return result
 
 
-class DummyOSHomeForecastCoverageSensor(DummyOSBaseSensor):
+class DummyOSHomeForecastCoverageSensor(DummyOSAsyncPlannerResultSensor):
     _attr_name = "DO Energy Forecast Coverage"
     _attr_unique_id = "do_energy_forecast_coverage"
     _attr_suggested_object_id = "do_energy_forecast_coverage"
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_icon = "mdi:chart-donut"
 
-    @property
-    def native_value(self) -> float:
-        slots = self._forecast()
-        return round(sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES) / len(slots) * 100, 1) if slots else 0.0
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        slots = self._forecast()
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        slots = _build_public_forecast_from_snapshot(snapshot)
         sources: dict[str, int] = {}
         for slot in slots:
             sources[slot.source] = sources.get(slot.source, 0) + 1
         populated = sum(1 for slot in slots if slot.energy_kwh is not None)
         supported = sum(1 for slot in slots if slot.source in SUPPORTED_SOURCES)
+        coverage = round(supported / len(slots) * 100, 1) if slots else 0.0
         return {
-            "status": "ok" if self._profile_learnable else "profile_unclassified",
-            "profile": self.coordinator.profile,
+            "value": coverage,
+            "status": "ok" if snapshot["profile"] in PROFILE_LEARNING_OPTIONS else "profile_unclassified",
+            "profile": snapshot["profile"],
             "slot_count": len(slots),
             "populated_slots": populated,
             "supported_slots": supported,
             "source_distribution": sources,
         }
+
+    def _initial_result(self) -> dict[str, Any]:
+        return {
+            "value": 0.0,
+            "status": "initializing",
+            "profile": self.coordinator.profile,
+            "slot_count": 0,
+            "populated_slots": 0,
+            "supported_slots": 0,
+            "source_distribution": {},
+            "blockers": ["forecast_calculation_pending"],
+        }
+
+    @property
+    def native_value(self) -> float:
+        return float(self._result().get("value", 0.0))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        result = dict(self._result())
+        result.pop("value", None)
+        return result
 
 
 class DummyOSHomeForecastConfidenceSensor(DummyOSAsyncPlannerResultSensor):
@@ -1333,7 +1351,7 @@ class DummyOSEnergyRecencyWeightingSensor(DummyOSBaseSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._result())
 
-class DummyOSEnergyPeakLearningSensor(DummyOSBaseSensor):
+class DummyOSEnergyPeakLearningSensor(DummyOSAsyncPlannerResultSensor):
     """Observer-only Step 6 Energy peak learning diagnostics."""
 
     _attr_name = "DO Energy Peak Learning"
@@ -1344,17 +1362,17 @@ class DummyOSEnergyPeakLearningSensor(DummyOSBaseSensor):
 
     @property
     def name(self) -> str:
-        """Return the canonical runtime name used for friendly_name."""
         return "DO Energy Peak Learning"
 
-    def _result(self) -> dict[str, Any]:
-        if not self._profile_learnable:
+    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        profile = snapshot["profile"]
+        if profile not in PROFILE_LEARNING_OPTIONS:
             return {
                 "schema_version": 1,
                 "algorithm_version": "peak_observer_v1",
                 "calibration_fingerprint": None,
                 "source_basis": {},
-                "profile": self.coordinator.profile,
+                "profile": profile,
                 "status": "blocked",
                 "minimum_samples_per_hour": 32,
                 "minimum_distinct_days_per_hour": 8,
@@ -1370,11 +1388,34 @@ class DummyOSEnergyPeakLearningSensor(DummyOSBaseSensor):
                 "events": [],
                 "blockers": ["profile_unclassified"],
             }
-        return calculate_peak_learning(self.coordinator.evaluations, self.coordinator.profile, dt_util.as_local)
+        return calculate_peak_learning(snapshot["evaluations"], profile, dt_util.as_local)
+
+    def _initial_result(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "algorithm_version": "peak_observer_v1",
+            "calibration_fingerprint": None,
+            "source_basis": {},
+            "profile": self.coordinator.profile,
+            "status": "initializing",
+            "minimum_samples_per_hour": 32,
+            "minimum_distinct_days_per_hour": 8,
+            "threshold_method": "leave_one_local_day_out_positive_residual_quantile",
+            "threshold_quantile": 0.9,
+            "candidate_count": 0,
+            "event_count": 0,
+            "calibrated_hours": 0,
+            "classification_calibration": {},
+            "protected_windows": {},
+            "calibration": {},
+            "classifications": {},
+            "events": [],
+            "blockers": ["observer_calculation_pending"],
+        }
 
     @property
     def native_value(self) -> str:
-        return str(self._result().get("status", "collecting"))
+        return str(self._result().get("status", "initializing"))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -1402,3 +1443,4 @@ class DummyOSEnergyPeakLearningSensor(DummyOSBaseSensor):
             "events": result["events"],
             "blockers": result.get("blockers", []),
         }
+
