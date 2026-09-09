@@ -10,7 +10,8 @@ def test_existing_public_model_health_identity_is_preserved():
     assert '_attr_name = "DO Energy Forecast Model Health"' in block
     assert '_attr_unique_id = "do_energy_forecast_model_health"' in block
     assert '_attr_suggested_object_id = "do_energy_forecast_model_health"' in block
-    assert "_build_model_health_result(self.coordinator, self._forecast())" in block
+    assert "_build_model_health_from_snapshot(snapshot)" in block
+    assert "class DummyOSHomeForecastModelHealthSensor(DummyOSAsyncPlannerResultSensor):" in block
     assert 'return "source_unavailable"' not in block
 
 
