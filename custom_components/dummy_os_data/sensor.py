@@ -840,9 +840,56 @@ class DummyOSHomeForecastModelHealthSensor(DummyOSAsyncPlannerResultSensor):
 
 
 class DummyOSEvaluationBaseSensor(DummyOSBaseSensor):
+    """Executor-backed shared evaluation metrics cache."""
+
+    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
+        super().__init__(coordinator)
+        self._cached_metrics: dict[str, Any] | None = None
+        self._refresh_task = None
+        self._refresh_pending = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._schedule_refresh()
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_task.cancel()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_update(self) -> None:
+        self._schedule_refresh()
+
+    @callback
+    def _schedule_refresh(self) -> None:
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_pending = True
+            return
+        self._refresh_task = self.hass.async_create_task(self._async_refresh_metrics())
+
+    async def _async_refresh_metrics(self) -> None:
+        while True:
+            self._refresh_pending = False
+            evaluations = list(self.coordinator.evaluations)
+            profile = self.coordinator.profile
+            self._cached_metrics = await self.hass.async_add_executor_job(
+                calculate_metrics, evaluations, profile
+            )
+            self.async_write_ha_state()
+            if not self._refresh_pending:
+                return
+
     @property
     def _metrics(self) -> dict[str, Any]:
-        return self.coordinator.evaluation_metrics(self.coordinator.profile)
+        return self._cached_metrics or {
+            "samples": 0,
+            "accuracy_percent": None,
+            "mae_kwh": None,
+            "bias_kwh": None,
+            "actual_total_kwh": 0.0,
+            "forecast_total_kwh": 0.0,
+        }
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
