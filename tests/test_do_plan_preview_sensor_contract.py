@@ -24,14 +24,17 @@ def test_preview_keeps_observer_only_authority_contract() -> None:
     assert '"reserve_recalculated": False' in core
     assert '"prices_fallback_used": False' in core
     assert '"missing_as_zero_used": False' in core
+    assert '"calculation_scope": "planner_preview_only"' in core
+    assert '"losses_included": True' in core
+    assert '"preview_decision"' in core
 
 
 def test_preview_uses_separate_import_and_export_economics() -> None:
     core = (ROOT / "custom_components/dummy_os_data/do_plan_preview.py").read_text()
-    assert '"avoided_import_price"' in core
-    assert '"export_price"' in core
-    assert 'best_import_avoidance' in core
-    assert 'best_export_trade' in core
+    assert '"best_self_use_discharge_import_price"' in core
+    assert '"best_export_discharge_export_price"' in core
+    assert '"best_self_use_margin"' in core
+    assert '"best_export_margin"' in core
     assert 'export_price = _finite(raw.get("export_price"))' in core
     assert 'export_price = import_price' not in core
 
