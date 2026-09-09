@@ -16,7 +16,9 @@ def _energy_need(**overrides):
         "status": "ready",
         "valid": True,
         "reason": "additional_energy_required_for_need_plus_reserve",
+        "input_status": "ready",
         "input_rows_signature": "sig-step2",
+        "first_usable_solar": "2026-09-09T07:00:00+00:00",
         "battery_capacity_kwh": 7.2,
         "min_soc_percent": 5.0,
         "safety_reserve_percent": 7.0,
@@ -29,20 +31,25 @@ def _energy_need(**overrides):
     return result
 
 
-def test_current_live_example_matches_independent_calculation() -> None:
+def test_current_live_example_matches_independent_calculation_and_contract() -> None:
     result = MOD.build_do_plan_reserve_soc(energy_need_result=_energy_need())
     assert result["status"] == "ready"
     assert result["valid"] is True
     assert result["reason"] == "reserve_deficit"
+    assert result["input_status"] == "ready"
+    assert result["input_rows_signature"] == "sig-step2"
+    assert result["first_usable_solar"] == "2026-09-09T07:00:00+00:00"
+    assert result["available_battery_kwh"] == 1.08
+    assert result["usable_capacity_above_min_kwh"] == 6.84
     assert result["current_usable_above_min_kwh"] == 1.08
     assert result["max_usable_above_min_kwh"] == 6.84
+    assert result["reserve_soc_raw_percent"] == 20.333
     assert result["reserve_soc_target_percent"] == 20.333
     assert result["reserve_deficit_kwh"] == 0.024
     assert result["reserve_deficit_percent"] == 0.333
     assert result["free_above_reserve_kwh"] == 0.0
     assert result["free_above_reserve_percent"] == 0.0
     assert result["unmet_reserve_at_full_soc_kwh"] == 0.0
-    assert result["input_rows_signature"] == "sig-step2"
 
 
 def test_surplus_is_reported_without_action_authority() -> None:
@@ -88,6 +95,9 @@ def test_unready_step2_blocks_instead_of_using_missing_as_zero() -> None:
     assert result["status"] == "blocked"
     assert result["valid"] is False
     assert "energy_need_not_ready" in result["blockers"]
+    assert result["available_battery_kwh"] is None
+    assert result["usable_capacity_above_min_kwh"] is None
+    assert result["reserve_soc_raw_percent"] is None
     assert result["reserve_soc_target_percent"] is None
     assert result["reserve_deficit_kwh"] is None
 
@@ -103,6 +113,7 @@ def test_real_zero_is_valid() -> None:
     )
     assert result["status"] == "ready"
     assert result["valid"] is True
+    assert result["reserve_soc_raw_percent"] == 12.0
     assert result["reserve_soc_target_percent"] == 12.0
     assert result["reserve_deficit_kwh"] == 0.0
     assert result["free_above_reserve_kwh"] == 0.0
@@ -120,6 +131,7 @@ def test_infeasible_when_full_battery_cannot_hold_required_energy_above_min() ->
     assert result["status"] == "infeasible"
     assert result["valid"] is False
     assert result["reason"] == "required_reserve_exceeds_usable_capacity_at_full_soc"
+    assert result["reserve_soc_raw_percent"] > 100.0
     assert result["reserve_soc_target_percent"] == 100.0
     assert result["unmet_reserve_at_full_soc_kwh"] == 0.664
     assert "reserve_not_achievable_within_battery_capacity" in result["blockers"]
