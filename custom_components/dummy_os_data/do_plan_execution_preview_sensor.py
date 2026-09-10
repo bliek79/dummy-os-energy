@@ -7,6 +7,7 @@ from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN, NAME, VERSION
@@ -76,7 +77,9 @@ class _ExecutionPreviewEntityMixin:
                 remove()
         await super().async_will_remove_from_hass()
 
+    @callback
     def _handle_update(self) -> None:
+        """Handle event-loop owned coordinator/store updates."""
         self.async_write_ha_state()
 
 
