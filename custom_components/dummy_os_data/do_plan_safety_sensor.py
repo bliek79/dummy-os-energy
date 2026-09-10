@@ -12,7 +12,6 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .const import DOMAIN, NAME, VERSION
 from .do_plan_safety import build_do_plan_prestart, build_do_plan_safety
 from .do_plan_scheduler_sensor import DummyOSPlanSchedulerRuntime, get_do_plan_scheduler_runtime
-from .sensor import _build_reserve_from_snapshot, _planner_runtime_snapshot
 
 SOC_ENTITY = "sensor.anker_solix_solarbank_max_ac_185_soc"
 
@@ -45,6 +44,9 @@ class DummyOSPlanSafetyRuntime:
         soc = self._soc_percent()
         key = (current.astimezone(timezone.utc).isoformat(), repr(snapshot), repr(scheduler), soc)
         if key != self._cache_key or self._cached_safety is None or self._cached_prestart is None:
+            # Lazy import avoids a module cycle while reusing the existing
+            # planner/reserve contract instead of creating a second calculation path.
+            from .sensor import _build_reserve_from_snapshot, _planner_runtime_snapshot
             planner_snapshot = _planner_runtime_snapshot(self.coordinator, now=current, soc_percent=soc)
             reserve = _build_reserve_from_snapshot(planner_snapshot)
             safety = build_do_plan_safety(
