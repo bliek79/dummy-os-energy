@@ -1,6 +1,7 @@
 """Home Assistant adapter for observer-only Planner Step 6 shadow Plan Store."""
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import datetime
@@ -12,14 +13,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN, NAME, VERSION
-from .do_plan_store import (
-    SLOT_COUNT,
-    cleanup_automatic_slots,
-    new_store_snapshot,
-    summarize_store,
-    sync_automatic_candidates,
-    validate_store_snapshot,
-)
+from .do_plan_store import SLOT_COUNT, cleanup_automatic_slots, new_store_snapshot, summarize_store, sync_automatic_candidates, validate_store_snapshot
 from .do_plan_store_reconcile import prune_obsolete_automatic_pending
 
 STORE_VERSION = 1
@@ -33,53 +27,38 @@ class DummyOSShadowPlanStoreRuntime:
         self.coordinator = coordinator
         self.hass = coordinator.hass
         self.entry_id = coordinator.entry.entry_id
-        self._store: Store[dict[str, Any]] = Store(
-            self.hass,
-            STORE_VERSION,
-            f"{DOMAIN}.{self.entry_id}.do_plan_store_shadow",
-        )
+        self._store: Store[dict[str, Any]] = Store(self.hass, STORE_VERSION, f"{DOMAIN}.{self.entry_id}.do_plan_store_shadow")
         self.snapshot: dict[str, Any] = new_store_snapshot()
         self.loaded = False
         self.persistence_error: str | None = None
         self._load_task = None
+        self.transaction_lock = asyncio.Lock()
         self._listeners: set[Callable[[], None]] = set()
         self.last_bridge_result: dict[str, Any] | None = None
 
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.add(listener)
-
-        def remove() -> None:
-            self._listeners.discard(listener)
-
+        def remove() -> None: self._listeners.discard(listener)
         return remove
 
     @callback
     def _notify(self) -> None:
-        """Notify event-loop owned listeners without executor dispatch."""
-        for listener in tuple(self._listeners):
-            listener()
+        for listener in tuple(self._listeners): listener()
 
     async def async_ensure_loaded(self) -> None:
-        if self.loaded:
-            return
-        if self._load_task is None:
-            self._load_task = self.hass.async_create_task(self._async_load())
+        if self.loaded: return
+        if self._load_task is None: self._load_task = self.hass.async_create_task(self._async_load())
         await self._load_task
 
     async def _async_load(self) -> None:
         raw = await self._store.async_load()
-        self.snapshot = (
-            new_store_snapshot()
-            if raw is None
-            else (deepcopy(raw) if isinstance(raw, dict) else raw)
-        )
+        self.snapshot = new_store_snapshot() if raw is None else (deepcopy(raw) if isinstance(raw, dict) else raw)
         self.loaded = True
         self._notify()
 
     async def async_save_snapshot(self, snapshot: dict[str, Any]) -> bool:
         valid, _ = validate_store_snapshot(snapshot)
-        if not valid:
-            return False
+        if not valid: return False
         try:
             await self._store.async_save(deepcopy(snapshot))
         except Exception as err:
@@ -92,53 +71,35 @@ class DummyOSShadowPlanStoreRuntime:
         self._notify()
         return True
 
-    async def async_apply_bridge_candidates(
-        self,
-        candidates: list[dict[str, Any]],
-        now: datetime,
-    ) -> dict[str, Any]:
-        """Persist one atomic isolated shadow-store bridge refresh."""
+    async def async_apply_bridge_candidates(self, candidates: list[dict[str, Any]], now: datetime) -> dict[str, Any]:
+        """Persist one serialized atomic isolated shadow-store bridge refresh."""
         await self.async_ensure_loaded()
-        valid, blockers = validate_store_snapshot(self.snapshot)
-        if not valid:
-            result = {"status": "blocked", "changed": False, "blockers": blockers}
+        async with self.transaction_lock:
+            valid, blockers = validate_store_snapshot(self.snapshot)
+            if not valid:
+                result = {"status": "blocked", "changed": False, "blockers": blockers}
+                self.last_bridge_result = result
+                self._notify()
+                return result
+            cleaned, cleanup = cleanup_automatic_slots(self.snapshot, now)
+            pruned, reconcile = prune_obsolete_automatic_pending(cleaned, candidates, now)
+            updated, sync = sync_automatic_candidates(pruned, candidates, now)
+            changed = bool(cleanup.get("changed") or reconcile.get("changed") or sync.get("changed"))
+            saved = True
+            if changed: saved = await self.async_save_snapshot(updated)
+            result = {
+                "status": "ready" if saved else "blocked", "changed": changed, "persistence_saved": saved,
+                "cleanup": cleanup, "sync": sync, "reconcile": reconcile,
+                "blockers": [] if saved else ["persistence_write_failed"],
+                "operational_plan_store_write": False, "scheduler_invoked": False, "safety_chain_invoked": False,
+                "service_calls_performed": False, "physical_execution_authority": False,
+            }
             self.last_bridge_result = result
             self._notify()
             return result
 
-        cleaned, cleanup = cleanup_automatic_slots(self.snapshot, now)
-        pruned, reconcile = prune_obsolete_automatic_pending(cleaned, candidates, now)
-        updated, sync = sync_automatic_candidates(pruned, candidates, now)
-        changed = bool(
-            cleanup.get("changed") or reconcile.get("changed") or sync.get("changed")
-        )
-        saved = True
-        if changed:
-            saved = await self.async_save_snapshot(updated)
-        result = {
-            "status": "ready" if saved else "blocked",
-            "changed": changed,
-            "persistence_saved": saved,
-            "cleanup": cleanup,
-            "sync": sync,
-            "reconcile": reconcile,
-            "blockers": [] if saved else ["persistence_write_failed"],
-            "operational_plan_store_write": False,
-            "scheduler_invoked": False,
-            "safety_chain_invoked": False,
-            "service_calls_performed": False,
-            "physical_execution_authority": False,
-        }
-        self.last_bridge_result = result
-        self._notify()
-        return result
-
     def summary(self) -> dict[str, Any]:
-        result = summarize_store(
-            self.snapshot,
-            loaded=self.loaded,
-            persistence_error=self.persistence_error,
-        )
+        result = summarize_store(self.snapshot, loaded=self.loaded, persistence_error=self.persistence_error)
         if self.last_bridge_result is not None:
             result["last_bridge_status"] = self.last_bridge_result.get("status")
             result["last_bridge_changed"] = self.last_bridge_result.get("changed")
@@ -146,24 +107,14 @@ class DummyOSShadowPlanStoreRuntime:
 
     def slot(self, slot_id: int) -> dict[str, Any]:
         slots = self.snapshot.get("slots", []) if isinstance(self.snapshot, dict) else []
-        if (
-            isinstance(slots, list)
-            and 1 <= slot_id <= len(slots)
-            and isinstance(slots[slot_id - 1], dict)
-        ):
+        if isinstance(slots, list) and 1 <= slot_id <= len(slots) and isinstance(slots[slot_id - 1], dict):
             return deepcopy(slots[slot_id - 1])
-        return {
-            "slot_id": slot_id,
-            "status": "blocked",
-            "blockers": ["slot_structure_invalid"],
-        }
+        return {"slot_id": slot_id, "status": "blocked", "blockers": ["slot_structure_invalid"]}
 
 
 def get_do_plan_store_runtime(coordinator: Any) -> DummyOSShadowPlanStoreRuntime:
-    """Return the single Plan Store runtime shared by all HA platforms."""
     runtime = getattr(coordinator, _RUNTIME_ATTR, None)
-    if isinstance(runtime, DummyOSShadowPlanStoreRuntime):
-        return runtime
+    if isinstance(runtime, DummyOSShadowPlanStoreRuntime): return runtime
     runtime = DummyOSShadowPlanStoreRuntime(coordinator)
     setattr(coordinator, _RUNTIME_ATTR, runtime)
     return runtime
@@ -172,74 +123,37 @@ def get_do_plan_store_runtime(coordinator: Any) -> DummyOSShadowPlanStoreRuntime
 class DummyOSPlanStoreBaseSensor(SensorEntity):
     _attr_should_poll = False
     _attr_has_entity_name = False
-
     def __init__(self, runtime: DummyOSShadowPlanStoreRuntime) -> None:
-        self.runtime = runtime
-        self._remove_listener = None
-
+        self.runtime = runtime; self._remove_listener = None
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, "main")},
-            name=NAME,
-            manufacturer="Dummy OS",
-            model="Energy Platform",
-            sw_version=VERSION,
-        )
-
+        return DeviceInfo(identifiers={(DOMAIN, "main")}, name=NAME, manufacturer="Dummy OS", model="Energy Platform", sw_version=VERSION)
     async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self._remove_listener = self.runtime.add_listener(self._handle_update)
-        await self.runtime.async_ensure_loaded()
-        self.async_write_ha_state()
-
+        await super().async_added_to_hass(); self._remove_listener = self.runtime.add_listener(self._handle_update); await self.runtime.async_ensure_loaded(); self.async_write_ha_state()
     async def async_will_remove_from_hass(self) -> None:
-        if self._remove_listener is not None:
-            self._remove_listener()
+        if self._remove_listener is not None: self._remove_listener()
         await super().async_will_remove_from_hass()
-
     @callback
-    def _handle_update(self) -> None:
-        """Handle event-loop owned Plan Store notifications."""
-        self.async_write_ha_state()
+    def _handle_update(self) -> None: self.async_write_ha_state()
 
 
 class DummyOSPlanStoreSensor(DummyOSPlanStoreBaseSensor):
-    _attr_name = "DO Plan Store"
-    _attr_unique_id = "do_plan_store"
-    _attr_suggested_object_id = "do_plan_store"
-    _attr_icon = "mdi:database-clock-outline"
-
+    _attr_name = "DO Plan Store"; _attr_unique_id = "do_plan_store"; _attr_suggested_object_id = "do_plan_store"; _attr_icon = "mdi:database-clock-outline"
     @property
-    def native_value(self) -> str:
-        return str(self.runtime.summary().get("status", "initializing"))
-
+    def native_value(self) -> str: return str(self.runtime.summary().get("status", "initializing"))
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return self.runtime.summary()
+    def extra_state_attributes(self) -> dict[str, Any]: return self.runtime.summary()
 
 
 class DummyOSPlanStoreSlotSensor(DummyOSPlanStoreBaseSensor):
     def __init__(self, runtime: DummyOSShadowPlanStoreRuntime, slot_id: int) -> None:
-        super().__init__(runtime)
-        self.slot_id = slot_id
-        self._attr_name = f"DO Plan Store Slot {slot_id}"
-        self._attr_unique_id = f"do_plan_store_slot_{slot_id}"
-        self._attr_suggested_object_id = f"do_plan_store_slot_{slot_id}"
-        self._attr_icon = "mdi:calendar-clock-outline"
-
+        super().__init__(runtime); self.slot_id = slot_id; self._attr_name = f"DO Plan Store Slot {slot_id}"; self._attr_unique_id = f"do_plan_store_slot_{slot_id}"; self._attr_suggested_object_id = f"do_plan_store_slot_{slot_id}"; self._attr_icon = "mdi:calendar-clock-outline"
     @property
-    def native_value(self) -> str:
-        return str(self.runtime.slot(self.slot_id).get("status", "empty"))
-
+    def native_value(self) -> str: return str(self.runtime.slot(self.slot_id).get("status", "empty"))
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return self.runtime.slot(self.slot_id)
+    def extra_state_attributes(self) -> dict[str, Any]: return self.runtime.slot(self.slot_id)
 
 
 def build_do_plan_store_sensors(coordinator: Any) -> list[SensorEntity]:
     runtime = get_do_plan_store_runtime(coordinator)
-    return [
-        DummyOSPlanStoreSensor(runtime),
-        *[DummyOSPlanStoreSlotSensor(runtime, slot_id) for slot_id in range(1, SLOT_COUNT + 1)],
-    ]
+    return [DummyOSPlanStoreSensor(runtime), *[DummyOSPlanStoreSlotSensor(runtime, slot_id) for slot_id in range(1, SLOT_COUNT + 1)]]
