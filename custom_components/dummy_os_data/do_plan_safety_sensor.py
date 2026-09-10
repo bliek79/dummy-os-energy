@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_state_change_event
 
@@ -118,10 +119,14 @@ class _SafetyEntityMixin:
                 remove()
         await super().async_will_remove_from_hass()
 
+    @callback
     def _handle_update(self) -> None:
+        """Handle event-loop owned coordinator/store updates."""
         self.async_write_ha_state()
 
+    @callback
     def _handle_source_update(self, _event) -> None:
+        """Handle HA state-change events on the event loop, never in executor."""
         self.async_write_ha_state()
 
 
