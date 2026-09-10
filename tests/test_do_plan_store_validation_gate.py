@@ -82,12 +82,32 @@ def test_reconciliation_keeps_plan_and_slot_identity():
     store, _ = sync_automatic_candidates(new_store_snapshot(NOW), [candidate()], NOW)
     original = dict(store["slots"][0])
     revised = candidate(cid="c2", signature="sig-2", energy=0.8)
-    store2, meta = sync_automatic_candidates(store, [revised], NOW + timedelta(minutes=5))
+    pruned, prune_meta = prune_obsolete_automatic_pending(store, [revised], NOW + timedelta(minutes=5))
+    assert prune_meta["changed"] is False
+    store2, meta = sync_automatic_candidates(pruned, [revised], NOW + timedelta(minutes=5))
     assert meta["reconciled_slots"] == [1]
     assert store2["slots"][0]["slot_id"] == original["slot_id"]
     assert store2["slots"][0]["plan_id"] == original["plan_id"]
     assert store2["slots"][0]["planner_signature"] == "sig-2"
     assert store2["slots"][0]["planned_energy_kwh"] == 0.8
+
+
+def test_full_automatic_store_accepts_completely_new_set_in_same_refresh():
+    old = [
+        candidate(cid=f"old-{i}", identity=f"old-id-{i}", signature=f"old-sig-{i}", start_h=i + 1)
+        for i in range(3)
+    ]
+    store, first = sync_automatic_candidates(new_store_snapshot(NOW), old, NOW)
+    assert first["written_slots"] == [1, 2, 3]
+    new = [
+        candidate(cid=f"new-{i}", identity=f"new-id-{i}", signature=f"new-sig-{i}", start_h=i + 4)
+        for i in range(3)
+    ]
+    pruned, prune_meta = prune_obsolete_automatic_pending(store, new, NOW + timedelta(minutes=5))
+    assert prune_meta["released_slots"] == [1, 2, 3]
+    refreshed, sync_meta = sync_automatic_candidates(pruned, new, NOW + timedelta(minutes=5))
+    assert sync_meta["written_slots"] == [1, 2, 3]
+    assert [slot["candidate_id"] for slot in refreshed["slots"]] == ["new-0", "new-1", "new-2"]
 
 
 def test_corrupt_persistent_state_is_invalid_not_empty():
