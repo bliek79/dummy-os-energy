@@ -18,6 +18,7 @@ def _load_refresh_key():
         "do_plan_store_bridge",
         "do_plan_store_sensor",
         "do_plan_scheduler_sensor",
+        "do_plan_safety_sensor",
     ):
         module = types.ModuleType(f"custom_components.dummy_os_data.{name}")
         if name == "do_plan_grid_support":
@@ -26,6 +27,8 @@ def _load_refresh_key():
             module.build_do_plan_store_bridge = lambda **kwargs: {}
         elif name == "do_plan_scheduler_sensor":
             module.build_do_plan_scheduler_sensors = lambda *args, **kwargs: []
+        elif name == "do_plan_safety_sensor":
+            module.build_do_plan_safety_sensors = lambda *args, **kwargs: []
         else:
             module.DummyOSShadowPlanStoreRuntime = object
             module.build_do_plan_store_sensors = lambda *args, **kwargs: []
