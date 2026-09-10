@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import hashlib
 import math
 from typing import Any
 
@@ -127,8 +128,8 @@ def validate_store_snapshot(snapshot: Any) -> tuple[bool, list[str]]:
 
 def _plan_id(origin: str, slot_id: int, now: datetime, signature: str | None = None) -> str:
     anchor = signature or f"slot-{slot_id}"
-    compact = abs(hash(anchor)) % 0xFFFFFF
-    return f"do-plan-{now.strftime('%Y%m%dT%H%M%SZ')}-{origin[:3]}-{compact:06x}"
+    compact = hashlib.sha256(anchor.encode("utf-8")).hexdigest()[:6]
+    return f"do-plan-{now.strftime('%Y%m%dT%H%M%SZ')}-{origin[:3]}-{compact}"
 
 
 def _validate_candidate(candidate: Any, now: datetime) -> list[str]:
