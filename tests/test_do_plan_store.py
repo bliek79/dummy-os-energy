@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -109,14 +108,15 @@ def test_corrupt_store_is_not_silently_treated_as_empty():
 
 def _plan_id_from_fresh_process(signature: str) -> str:
     repo_root = Path(__file__).resolve().parents[1]
+    module_path = repo_root / "custom_components" / "dummy_os_data" / "do_plan_store.py"
     code = (
         "from datetime import datetime, timezone; "
-        "from custom_components.dummy_os_data.do_plan_store import _plan_id; "
-        f"print(_plan_id('automatic_72h_planner', 1, datetime(2026,9,10,8,0,tzinfo=timezone.utc), {signature!r}))"
+        "import importlib.util; "
+        f"spec=importlib.util.spec_from_file_location('do_plan_store_pure', {str(module_path)!r}); "
+        "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+        f"print(module._plan_id('automatic_72h_planner', 1, datetime(2026,9,10,8,0,tzinfo=timezone.utc), {signature!r}))"
     )
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(repo_root) + os.pathsep + env.get("PYTHONPATH", "")
-    return subprocess.check_output([sys.executable, "-c", code], cwd=repo_root, env=env, text=True).strip()
+    return subprocess.check_output([sys.executable, "-c", code], cwd=repo_root, text=True).strip()
 
 
 def test_plan_id_is_stable_across_fresh_python_processes():
