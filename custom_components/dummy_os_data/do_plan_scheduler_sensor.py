@@ -15,7 +15,7 @@ from .do_plan_store_sensor import DummyOSShadowPlanStoreRuntime, get_do_plan_sto
 
 
 class DummyOSPlanSchedulerRuntime:
-    """Pure cached Scheduler view over the shared shadow Plan Store runtime."""
+    """Pure Scheduler view over the shared shadow Plan Store runtime."""
 
     def __init__(self, coordinator: Any, store_runtime: DummyOSShadowPlanStoreRuntime) -> None:
         self.coordinator = coordinator
@@ -23,17 +23,14 @@ class DummyOSPlanSchedulerRuntime:
         self._cached_result: dict[str, Any] | None = None
         self._cache_key: tuple[Any, ...] | None = None
 
-    @staticmethod
-    def _quarter(now: datetime) -> str:
-        value = now.astimezone(timezone.utc)
-        return value.replace(minute=(value.minute // 15) * 15, second=0, microsecond=0).isoformat()
-
     def result(self, now: datetime | None = None) -> dict[str, Any]:
         current = now or datetime.now(timezone.utc)
         summary = self.store_runtime.summary()
         snapshot = self.store_runtime.snapshot
+        # Scheduler timing must respect max_start_delay_minutes exactly at each
+        # evaluation. The decision signature itself remains native-quarter stable.
         key = (
-            self._quarter(current),
+            current.astimezone(timezone.utc).isoformat(),
             repr(snapshot),
             summary.get("status"),
             summary.get("store_valid"),
