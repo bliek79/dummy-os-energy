@@ -18,7 +18,8 @@ def _source(name: str) -> str:
 
 def test_planner_callback_adapters_import_home_assistant_callback_marker() -> None:
     for name in FILES:
-        assert "from homeassistant.core import callback" in _source(name), name
+        imports = [line for line in _source(name).splitlines() if line.startswith("from homeassistant.core import ")]
+        assert any("callback" in line for line in imports), name
 
 
 def test_safety_source_change_handler_is_event_loop_callback() -> None:
