@@ -115,7 +115,7 @@ class ReleaseConsistencyTests(unittest.TestCase):
         self.assertEqual(expected, set(english["options"]["step"]["init"]["data"]))
         self.assertEqual(expected, set(dutch["options"]["step"]["init"]["data"]))
         expected_config = set(strings["config"]["step"]["user"]["data"])
-        self.assertEqual(expected_config, set(english["config"]["step"]["init"]["data"]))
+        self.assertEqual(expected_config, set(english["config"]["step"]["user"]["data"]))
         self.assertEqual(expected_config, set(dutch["config"]["step"]["user"]["data"]))
         self.assertEqual(strings["config"]["step"]["user"]["title"], "Dummy OS Energy")
         self.assertEqual(dutch["options"]["step"]["init"]["title"], "Dummy OS Energy-opties")
