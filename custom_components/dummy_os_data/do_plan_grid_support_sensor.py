@@ -93,4 +93,4 @@ def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
         def native_value(self)->str: return str(self._result().get("status","initializing"))
         @property
         def extra_state_attributes(self)->dict[str,Any]: result=dict(self._result()); result["skipped_refreshes"]=self._skipped_refreshes; return result
-    return [DummyOSPlanGridSupportSensor(coordinator),DummyOSPlanStoreBridgeSensor(coordinator),*build_do_plan_store_sensors(coordinator,runtime),*build_do_plan_scheduler_sensors(coordinator),*build_do_plan_safety_sensors(coordinator),*build_do_plan_execution_preview_sensors(coordinator),*build_do_plan_manual_interface_sensors(coordinator)]
+    return [DummyOSPlanGridSupportSensor(coordinator),DummyOSPlanStoreBridgeSensor(coordinator),*build_do_plan_store_sensors(coordinator),*build_do_plan_scheduler_sensors(coordinator),*build_do_plan_safety_sensors(coordinator),*build_do_plan_execution_preview_sensors(coordinator),*build_do_plan_manual_interface_sensors(coordinator)]
