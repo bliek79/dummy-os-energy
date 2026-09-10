@@ -14,6 +14,7 @@ from .do_plan_safety import build_do_plan_prestart, build_do_plan_safety
 from .do_plan_scheduler_sensor import DummyOSPlanSchedulerRuntime, get_do_plan_scheduler_runtime
 
 SOC_ENTITY = "sensor.anker_solix_solarbank_max_ac_185_soc"
+RESERVE_ENTITY = "sensor.do_plan_reserve_soc"
 
 
 class DummyOSPlanSafetyRuntime:
@@ -37,18 +38,22 @@ class DummyOSPlanSafetyRuntime:
             return None
         return value if 0.0 <= value <= 100.0 else None
 
+    def _reserve_result(self) -> dict[str, Any]:
+        state = self.coordinator.hass.states.get(RESERVE_ENTITY)
+        if state is None or state.state in {"unknown", "unavailable", "none", "None", ""}:
+            return {"status": "unavailable", "valid": False, "reserve_soc_target_percent": None}
+        result = dict(state.attributes)
+        result["status"] = state.state
+        return result
+
     def results(self, now: datetime | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         current = now or datetime.now(timezone.utc)
         scheduler = self.scheduler_runtime.result(current)
         snapshot = deepcopy(self.store_runtime.snapshot)
         soc = self._soc_percent()
-        key = (current.astimezone(timezone.utc).isoformat(), repr(snapshot), repr(scheduler), soc)
+        reserve = self._reserve_result()
+        key = (current.astimezone(timezone.utc).isoformat(), repr(snapshot), repr(scheduler), soc, repr(reserve))
         if key != self._cache_key or self._cached_safety is None or self._cached_prestart is None:
-            # Lazy import avoids a module cycle while reusing the existing
-            # planner/reserve contract instead of creating a second calculation path.
-            from .sensor import _build_reserve_from_snapshot, _planner_runtime_snapshot
-            planner_snapshot = _planner_runtime_snapshot(self.coordinator, now=current, soc_percent=soc)
-            reserve = _build_reserve_from_snapshot(planner_snapshot)
             safety = build_do_plan_safety(
                 scheduler_result=scheduler,
                 store_snapshot=snapshot,
@@ -64,6 +69,7 @@ class DummyOSPlanSafetyRuntime:
             )
             safety["reserve_status"] = reserve.get("status")
             safety["reserve_valid"] = reserve.get("valid")
+            safety["reserve_source_entity"] = RESERVE_ENTITY
             safety["soc_source_entity"] = SOC_ENTITY
             self._cached_safety = safety
             self._cached_prestart = prestart
@@ -92,7 +98,7 @@ class _SafetyEntityMixin:
         self.coordinator = runtime.coordinator
         self._remove_store_listener = None
         self._remove_coordinator_listener = None
-        self._remove_soc_listener = None
+        self._remove_source_listener = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -103,11 +109,11 @@ class _SafetyEntityMixin:
         await self.runtime.store_runtime.async_ensure_loaded()
         self._remove_store_listener = self.runtime.store_runtime.add_listener(self._handle_update)
         self._remove_coordinator_listener = self.coordinator.async_add_listener(self._handle_update)
-        self._remove_soc_listener = async_track_state_change_event(self.coordinator.hass, [SOC_ENTITY], self._handle_soc_update)
+        self._remove_source_listener = async_track_state_change_event(self.coordinator.hass, [SOC_ENTITY, RESERVE_ENTITY], self._handle_source_update)
         self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
-        for remove in (self._remove_store_listener, self._remove_coordinator_listener, self._remove_soc_listener):
+        for remove in (self._remove_store_listener, self._remove_coordinator_listener, self._remove_source_listener):
             if remove is not None:
                 remove()
         await super().async_will_remove_from_hass()
@@ -115,7 +121,7 @@ class _SafetyEntityMixin:
     def _handle_update(self) -> None:
         self.async_write_ha_state()
 
-    def _handle_soc_update(self, _event) -> None:
+    def _handle_source_update(self, _event) -> None:
         self.async_write_ha_state()
 
 
