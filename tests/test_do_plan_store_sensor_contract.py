@@ -4,8 +4,9 @@ ROOT=Path(__file__).parents[1]
 def test_step6_store_entities_are_registered_via_planner_sensor_bundle():
     adapter=(ROOT/'custom_components/dummy_os_data/do_plan_grid_support_sensor.py').read_text()
     store_adapter=(ROOT/'custom_components/dummy_os_data/do_plan_store_sensor.py').read_text()
+    normalized=''.join(store_adapter.split())
     assert 'build_do_plan_store_sensors' in adapter
-    assert '_attr_unique_id = "do_plan_store"' in store_adapter
+    assert '_attr_unique_id="do_plan_store"' in normalized
     assert 'f"do_plan_store_slot_{slot_id}"' in store_adapter
 
 def test_step6_keeps_all_operational_rights_closed():
