@@ -1,7 +1,13 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import importlib.util
+from pathlib import Path
 
-from custom_components.dummy_os_data.do_plan_safety import build_do_plan_prestart, build_do_plan_safety
+MODULE=Path(__file__).parents[1]/"custom_components/dummy_os_data/do_plan_safety.py"
+spec=importlib.util.spec_from_file_location("do_plan_safety_pure",MODULE)
+mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+build_do_plan_safety=mod.build_do_plan_safety
+build_do_plan_prestart=mod.build_do_plan_prestart
 
 NOW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
 
