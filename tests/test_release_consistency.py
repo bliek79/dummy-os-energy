@@ -18,7 +18,7 @@ SOLAR_GENERATED_ENTITY_ID_ALIASES = MIGRATION_MODULE.SOLAR_GENERATED_ENTITY_ID_A
 DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES = MIGRATION_MODULE.DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES
 OBSOLETE_HOME_INPUT_ENTITY_ALIASES = MIGRATION_MODULE.OBSOLETE_HOME_INPUT_ENTITY_ALIASES
 
-VERSION = "0.2.0-alpha.15"
+VERSION = "0.2.0-alpha.16"
 
 EXPECTED_SOLAR_ENTITY_ID_ALIASES = {
     "do_solar_status": "sensor.dummy_os_solar_source_status",
@@ -98,7 +98,7 @@ class ReleaseConsistencyTests(unittest.TestCase):
     def test_manifest_const_and_release_notes_match(self) -> None:
         manifest = json.loads((ROOT / "custom_components/dummy_os_data/manifest.json").read_text())
         const = (ROOT / "custom_components/dummy_os_data/const.py").read_text()
-        notes = (ROOT / "RELEASE_NOTES.md").read_text()
+        notes = (ROOT / f"RELEASE_NOTES_{VERSION}.md").read_text()
         self.assertEqual(manifest["version"], VERSION)
         self.assertEqual(manifest["domain"], "dummy_os_data")
         self.assertEqual(manifest["name"], "Dummy OS Energy")
@@ -115,7 +115,7 @@ class ReleaseConsistencyTests(unittest.TestCase):
         self.assertEqual(expected, set(english["options"]["step"]["init"]["data"]))
         self.assertEqual(expected, set(dutch["options"]["step"]["init"]["data"]))
         expected_config = set(strings["config"]["step"]["user"]["data"])
-        self.assertEqual(expected_config, set(english["config"]["step"]["user"]["data"]))
+        self.assertEqual(expected_config, set(english["config"]["step"]["init"]["data"]))
         self.assertEqual(expected_config, set(dutch["config"]["step"]["user"]["data"]))
         self.assertEqual(strings["config"]["step"]["user"]["title"], "Dummy OS Energy")
         self.assertEqual(dutch["options"]["step"]["init"]["title"], "Dummy OS Energy-opties")
@@ -144,37 +144,18 @@ class ReleaseConsistencyTests(unittest.TestCase):
         self.assertIn('("select", "do_home_profile", "do_energy_profile", "select.do_energy_profile")', init_source)
         self.assertNotIn('_attr_unique_id = "do_home_', sensor_source)
         self.assertNotIn('_attr_unique_id = "do_home_profile"', select_source)
-        # Mandatory identity release gate: every public Energy sensor must have
-        # an explicit path to its canonical sensor.<unique_id> registry ID.
         for unique_id in EXPECTED_ENERGY_IDS:
             direct = f'(\"sensor\", \"{unique_id}\", \"sensor.{unique_id}\")'
-            migrated = re.compile(
-                rf'\(\"sensor\", \"[^\"]+\", \"{re.escape(unique_id)}\", \"sensor\.{re.escape(unique_id)}\"\)'
-            )
-            self.assertTrue(
-                direct in init_source or migrated.search(init_source),
-                f'Missing canonical entity-ID route for {unique_id}',
-            )
+            migrated = re.compile(rf'\(\"sensor\", \"[^\"]+\", \"{re.escape(unique_id)}\", \"sensor\.{re.escape(unique_id)}\"\)')
+            self.assertTrue(direct in init_source or migrated.search(init_source), f'Missing canonical entity-ID route for {unique_id}')
         self.assertNotIn('sensor.dummy_os_forecast_do_energy_time_windows', init_source)
 
     def test_time_windows_bad_alpha1214_id_is_safe_for_in_place_migration(self) -> None:
         migrations_source = (ROOT / "custom_components/dummy_os_data/entity_migrations.py").read_text()
         init_source = (ROOT / "custom_components/dummy_os_data/__init__.py").read_text()
-        self.assertIn(
-            '"do_energy_time_windows": "sensor.dummy_os_forecast_do_energy_time_windows"',
-            migrations_source,
-        )
-        self.assertTrue(
-            MIGRATION_MODULE.is_known_generated_entity_id(
-                "sensor",
-                "do_energy_time_windows",
-                "sensor.dummy_os_forecast_do_energy_time_windows",
-            )
-        )
-        self.assertIn(
-            '("sensor", "do_energy_time_windows", "sensor.do_energy_time_windows")',
-            init_source,
-        )
+        self.assertIn('"do_energy_time_windows": "sensor.dummy_os_forecast_do_energy_time_windows"', migrations_source)
+        self.assertTrue(MIGRATION_MODULE.is_known_generated_entity_id("sensor", "do_energy_time_windows", "sensor.dummy_os_forecast_do_energy_time_windows"))
+        self.assertIn('("sensor", "do_energy_time_windows", "sensor.do_energy_time_windows")', init_source)
 
     def test_observer_runtime_names_are_explicit_and_canonical(self) -> None:
         sensor_source = (ROOT / "custom_components/dummy_os_data/sensor.py").read_text()
@@ -233,32 +214,8 @@ class ReleaseConsistencyTests(unittest.TestCase):
 
     def test_identity_migrations_cover_all_source_energy_and_profile_entities(self) -> None:
         init_source = (ROOT / "custom_components/dummy_os_data/__init__.py").read_text()
-        source_pairs = {
-            "do_data_grid_net_power": "do_source_grid_net_power",
-            "do_data_grid_import_power": "do_source_grid_import_power",
-            "do_data_grid_export_power": "do_source_grid_export_power",
-            "do_data_solar_power": "do_source_solar_power",
-            "do_data_battery_charge_power": "do_source_battery_charge_power",
-            "do_data_battery_discharge_power": "do_source_battery_discharge_power",
-            "do_data_home_power": "do_source_home_power",
-        }
-        energy_pairs = {
-            "do_home_actual_quarter": "do_energy_actual_quarter",
-            "do_home_history_status": "do_energy_history_status",
-            "do_home_history_days": "do_energy_history_days",
-            "do_home_forecast_model": "do_energy_forecast_model",
-            "do_home_forecast": "do_energy_forecast",
-            "do_home_forecast_timeline": "do_energy_forecast_timeline",
-            "do_home_forecast_next_quarter": "do_energy_forecast_next_quarter",
-            "do_home_forecast_coverage": "do_energy_forecast_coverage",
-            "do_home_forecast_confidence": "do_energy_forecast_confidence",
-            "do_home_forecast_model_health": "do_energy_forecast_model_health",
-            "do_home_forecast_accuracy": "do_energy_forecast_accuracy",
-            "do_home_forecast_mae": "do_energy_forecast_mae",
-            "do_home_forecast_bias": "do_energy_forecast_bias",
-            "do_home_forecast_evaluation_samples": "do_energy_forecast_evaluation_samples",
-            "dummy_os_data_energy_peak_learning": "do_energy_peak_learning",
-        }
+        source_pairs = {"do_data_grid_net_power": "do_source_grid_net_power", "do_data_grid_import_power": "do_source_grid_import_power", "do_data_grid_export_power": "do_source_grid_export_power", "do_data_solar_power": "do_source_solar_power", "do_data_battery_charge_power": "do_source_battery_charge_power", "do_data_battery_discharge_power": "do_source_battery_discharge_power", "do_data_home_power": "do_source_home_power"}
+        energy_pairs = {"do_home_actual_quarter": "do_energy_actual_quarter", "do_home_history_status": "do_energy_history_status", "do_home_history_days": "do_energy_history_days", "do_home_forecast_model": "do_energy_forecast_model", "do_home_forecast": "do_energy_forecast", "do_home_forecast_timeline": "do_energy_forecast_timeline", "do_home_forecast_next_quarter": "do_energy_forecast_next_quarter", "do_home_forecast_coverage": "do_energy_forecast_coverage", "do_home_forecast_confidence": "do_energy_forecast_confidence", "do_home_forecast_model_health": "do_energy_forecast_model_health", "do_home_forecast_accuracy": "do_energy_forecast_accuracy", "do_home_forecast_mae": "do_energy_forecast_mae", "do_home_forecast_bias": "do_energy_forecast_bias", "do_home_forecast_evaluation_samples": "do_energy_forecast_evaluation_samples", "dummy_os_data_energy_peak_learning": "do_energy_peak_learning"}
         for old, new in {**source_pairs, **energy_pairs}.items():
             self.assertRegex(init_source, rf'\("sensor", "{old}", "{new}", "sensor\.{new}"\)')
         self.assertIn("new_unique_id=new_unique_id", init_source)
