@@ -22,6 +22,7 @@ def _load_refresh_key():
         else:
             module.DummyOSShadowPlanStoreRuntime = object
             module.build_do_plan_store_sensors = lambda *args, **kwargs: []
+            module.get_do_plan_store_runtime = lambda *args, **kwargs: object()
         sys.modules[module.__name__] = module
     spec = importlib.util.spec_from_file_location(
         "custom_components.dummy_os_data.do_plan_grid_support_sensor", MODULE_PATH
