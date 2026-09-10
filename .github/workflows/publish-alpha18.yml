@@ -1,0 +1,43 @@
+name: Publish Dummy OS Energy 0.2.0-alpha.18
+
+on:
+  push:
+    branches: [publish-alpha18]
+    paths: [.github/workflows/publish-alpha18.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TAG: 0.2.0-alpha.18
+      TITLE: Dummy OS Energy 0.2.0-alpha.18 - Plan Store Sensor Setup Hotfix
+      TARGET_SHA: 750c9321a2f5024c3570fa3c17aacdea9fb1df57
+      ZIP_NAME: Dummy_OS_Energy_0.2.0-alpha.18_HA_install.zip
+      CHECKSUM_NAME: SHA256SUMS-0.2.0-alpha.18.txt
+      NOTES_FILE: RELEASE_NOTES_0.2.0-alpha.18.md
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - name: Verify exact release metadata and hotfix
+        run: |
+          grep -F 'VERSION = "0.2.0-alpha.18"' custom_components/dummy_os_data/const.py
+          grep -F '"version": "0.2.0-alpha.18"' custom_components/dummy_os_data/manifest.json
+          grep -F '**Tag:** `0.2.0-alpha.18`' "$NOTES_FILE"
+          grep -F 'FORECAST_HORIZON_HOURS = 72' custom_components/dummy_os_data/const.py
+          grep -F 'QUARTER_MINUTES = 15' custom_components/dummy_os_data/const.py
+          ! grep -F 'build_do_plan_store_sensors(coordinator,runtime)' custom_components/dummy_os_data/do_plan_grid_support_sensor.py
+          grep -F '*build_do_plan_store_sensors(coordinator)' custom_components/dummy_os_data/do_plan_grid_support_sensor.py
+      - name: Build Home Assistant installation package
+        run: |
+          zip -r "$ZIP_NAME" custom_components/dummy_os_data -x '*/__pycache__/*' '*.pyc'
+          sha256sum "$ZIP_NAME" > "$CHECKSUM_NAME"
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG" "$ZIP_NAME" "$CHECKSUM_NAME" --target "$TARGET_SHA" --title "$TITLE" --notes-file "$NOTES_FILE" --prerelease
