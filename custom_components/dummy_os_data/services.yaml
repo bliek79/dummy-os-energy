@@ -1,0 +1,95 @@
+manual_plan_draft:
+  name: Manual plan draft
+  description: Create an in-memory draft for an empty shadow Plan Store slot. Does not control the battery.
+  fields:
+    slot_id:
+      name: Slot
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 3
+          step: 1
+    action:
+      name: Action
+      selector:
+        select:
+          options: [charge, discharge]
+    start_time:
+      name: Start time
+      selector:
+        text:
+    power_w:
+      name: Power
+      selector:
+        number:
+          min: 1
+          max: 3200
+          step: 1
+          unit_of_measurement: W
+    target_soc_percent:
+      name: Target SOC
+      selector:
+        number:
+          min: 5
+          max: 100
+          step: 0.1
+          unit_of_measurement: "%"
+    max_runtime_minutes:
+      name: Maximum runtime
+      selector:
+        number:
+          min: 15
+          max: 1440
+          step: 15
+          unit_of_measurement: min
+    max_start_delay_minutes:
+      name: Maximum start delay
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 1
+          unit_of_measurement: min
+
+manual_plan_edit:
+  name: Manual plan edit
+  description: Load an existing non-running manual shadow plan as a guarded edit draft.
+  fields:
+    slot_id:
+      name: Slot
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 3
+          step: 1
+
+manual_plan_validate:
+  name: Manual plan validate
+  description: Validate the current draft against limits, current Plan Store state and all reserved slot windows.
+
+manual_plan_finalize:
+  name: Manual plan finalize
+  description: Revalidate and atomically persist the current draft to the isolated shadow Plan Store. No physical execution authority is granted.
+
+manual_plan_clear:
+  name: Manual plan clear
+  description: Clear a non-running manual shadow Plan Store slot. Automatic and running slots are protected.
+  fields:
+    slot_id:
+      name: Slot
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 3
+          step: 1
+    expected_plan_id:
+      name: Expected plan ID
+      selector:
+        text:
+    expected_updated_at:
+      name: Expected updated timestamp
+      selector:
+        text:
