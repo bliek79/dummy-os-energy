@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN, NAME, VERSION
@@ -24,15 +25,15 @@ class DummyOSManualInterfaceRuntime:
         self.selected_slot = VALID_SLOT_OPTIONS[0]
         self._listeners: set[Callable[[], None]] = set()
 
-    def add_listener(self, callback: Callable[[], None]) -> Callable[[], None]:
-        self._listeners.add(callback)
-        def remove() -> None: self._listeners.discard(callback)
+    def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        self._listeners.add(listener)
+        def remove() -> None: self._listeners.discard(listener)
         return remove
 
     def select(self, option: str) -> None:
         if option not in VALID_SLOT_OPTIONS: raise ValueError(f"Unsupported manual planslot: {option}")
         self.selected_slot = option
-        for callback in tuple(self._listeners): callback()
+        for listener in tuple(self._listeners): listener()
 
 
 def get_do_plan_manual_interface_runtime(coordinator: Any) -> DummyOSManualInterfaceRuntime:
@@ -75,8 +76,8 @@ class DummyOSManualPlanInterfaceSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._remove_store_listener = self.store_runtime.add_listener(self.async_write_ha_state)
-        self._remove_manual_listener = self.manual_runtime.add_listener(self.async_write_ha_state)
+        self._remove_store_listener = self.store_runtime.add_listener(self._handle_update)
+        self._remove_manual_listener = self.manual_runtime.add_listener(self._handle_update)
         await self.store_runtime.async_ensure_loaded()
         self.async_write_ha_state()
 
@@ -84,6 +85,11 @@ class DummyOSManualPlanInterfaceSensor(SensorEntity):
         if self._remove_store_listener is not None: self._remove_store_listener()
         if self._remove_manual_listener is not None: self._remove_manual_listener()
         await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_update(self) -> None:
+        """Handle event-loop owned store/manual-interface updates."""
+        self.async_write_ha_state()
 
 
 def build_do_plan_manual_interface_sensors(coordinator: Any) -> list[SensorEntity]:
