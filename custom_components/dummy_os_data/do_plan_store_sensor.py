@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.storage import Store
 
@@ -44,17 +45,19 @@ class DummyOSShadowPlanStoreRuntime:
         self._listeners: set[Callable[[], None]] = set()
         self.last_bridge_result: dict[str, Any] | None = None
 
-    def add_listener(self, callback: Callable[[], None]) -> Callable[[], None]:
-        self._listeners.add(callback)
+    def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        self._listeners.add(listener)
 
         def remove() -> None:
-            self._listeners.discard(callback)
+            self._listeners.discard(listener)
 
         return remove
 
+    @callback
     def _notify(self) -> None:
-        for callback in tuple(self._listeners):
-            callback()
+        """Notify event-loop owned listeners without executor dispatch."""
+        for listener in tuple(self._listeners):
+            listener()
 
     async def async_ensure_loaded(self) -> None:
         if self.loaded:
@@ -186,7 +189,7 @@ class DummyOSPlanStoreBaseSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._remove_listener = self.runtime.add_listener(self.async_write_ha_state)
+        self._remove_listener = self.runtime.add_listener(self._handle_update)
         await self.runtime.async_ensure_loaded()
         self.async_write_ha_state()
 
@@ -194,6 +197,11 @@ class DummyOSPlanStoreBaseSensor(SensorEntity):
         if self._remove_listener is not None:
             self._remove_listener()
         await super().async_will_remove_from_hass()
+
+    @callback
+    def _handle_update(self) -> None:
+        """Handle event-loop owned Plan Store notifications."""
+        self.async_write_ha_state()
 
 
 class DummyOSPlanStoreSensor(DummyOSPlanStoreBaseSensor):
@@ -218,37 +226,20 @@ class DummyOSPlanStoreSlotSensor(DummyOSPlanStoreBaseSensor):
         self._attr_name = f"DO Plan Store Slot {slot_id}"
         self._attr_unique_id = f"do_plan_store_slot_{slot_id}"
         self._attr_suggested_object_id = f"do_plan_store_slot_{slot_id}"
-        self._attr_icon = f"mdi:numeric-{slot_id}-circle-outline"
+        self._attr_icon = "mdi:calendar-clock-outline"
 
     @property
     def native_value(self) -> str:
-        return str(self.runtime.slot(self.slot_id).get("status", "blocked"))
+        return str(self.runtime.slot(self.slot_id).get("status", "empty"))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        slot = self.runtime.slot(self.slot_id)
-        slot.update(
-            {
-                "shadow_only": True,
-                "operational_plan_store_write": False,
-                "scheduler_invoked": False,
-                "safety_chain_invoked": False,
-                "service_calls_performed": False,
-                "physical_execution_authority": False,
-            }
-        )
-        return slot
+        return self.runtime.slot(self.slot_id)
 
 
-def build_do_plan_store_sensors(
-    coordinator: Any,
-    runtime: DummyOSShadowPlanStoreRuntime | None = None,
-) -> list[SensorEntity]:
-    runtime = runtime or get_do_plan_store_runtime(coordinator)
+def build_do_plan_store_sensors(coordinator: Any) -> list[SensorEntity]:
+    runtime = get_do_plan_store_runtime(coordinator)
     return [
         DummyOSPlanStoreSensor(runtime),
-        *[
-            DummyOSPlanStoreSlotSensor(runtime, slot)
-            for slot in range(1, SLOT_COUNT + 1)
-        ],
+        *[DummyOSPlanStoreSlotSensor(runtime, slot_id) for slot_id in range(1, SLOT_COUNT + 1)],
     ]
