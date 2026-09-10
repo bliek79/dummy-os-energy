@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -11,7 +12,14 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN, NAME, VERSION
-from .do_plan_store import SLOT_COUNT, new_store_snapshot, summarize_store, validate_store_snapshot
+from .do_plan_store import (
+    SLOT_COUNT,
+    cleanup_automatic_slots,
+    new_store_snapshot,
+    summarize_store,
+    sync_automatic_candidates,
+    validate_store_snapshot,
+)
 
 STORE_VERSION = 1
 
@@ -33,6 +41,7 @@ class DummyOSShadowPlanStoreRuntime:
         self.persistence_error: str | None = None
         self._load_task = None
         self._listeners: set[Callable[[], None]] = set()
+        self.last_bridge_result: dict[str, Any] | None = None
 
     def add_listener(self, callback: Callable[[], None]) -> Callable[[], None]:
         self._listeners.add(callback)
@@ -78,8 +87,46 @@ class DummyOSShadowPlanStoreRuntime:
         self._notify()
         return True
 
+    async def async_apply_bridge_candidates(
+        self, candidates: list[dict[str, Any]], now: datetime
+    ) -> dict[str, Any]:
+        """Persist only the isolated shadow-store result of one bridge refresh."""
+        await self.async_ensure_loaded()
+        valid, blockers = validate_store_snapshot(self.snapshot)
+        if not valid:
+            result = {"status": "blocked", "changed": False, "blockers": blockers}
+            self.last_bridge_result = result
+            self._notify()
+            return result
+        cleaned, cleanup = cleanup_automatic_slots(self.snapshot, now)
+        updated, sync = sync_automatic_candidates(cleaned, candidates, now)
+        changed = bool(cleanup.get("changed") or sync.get("changed"))
+        saved = True
+        if changed:
+            saved = await self.async_save_snapshot(updated)
+        result = {
+            "status": "ready" if saved else "blocked",
+            "changed": changed,
+            "persistence_saved": saved,
+            "cleanup": cleanup,
+            "sync": sync,
+            "blockers": [] if saved else ["persistence_write_failed"],
+            "operational_plan_store_write": False,
+            "scheduler_invoked": False,
+            "safety_chain_invoked": False,
+            "service_calls_performed": False,
+            "physical_execution_authority": False,
+        }
+        self.last_bridge_result = result
+        self._notify()
+        return result
+
     def summary(self) -> dict[str, Any]:
-        return summarize_store(self.snapshot, loaded=self.loaded, persistence_error=self.persistence_error)
+        result = summarize_store(self.snapshot, loaded=self.loaded, persistence_error=self.persistence_error)
+        if self.last_bridge_result is not None:
+            result["last_bridge_status"] = self.last_bridge_result.get("status")
+            result["last_bridge_changed"] = self.last_bridge_result.get("changed")
+        return result
 
     def slot(self, slot_id: int) -> dict[str, Any]:
         slots = self.snapshot.get("slots", []) if isinstance(self.snapshot, dict) else []
@@ -160,8 +207,10 @@ class DummyOSPlanStoreSlotSensor(DummyOSPlanStoreBaseSensor):
         return slot
 
 
-def build_do_plan_store_sensors(coordinator: Any) -> list[SensorEntity]:
-    runtime = DummyOSShadowPlanStoreRuntime(coordinator)
+def build_do_plan_store_sensors(
+    coordinator: Any, runtime: DummyOSShadowPlanStoreRuntime | None = None
+) -> list[SensorEntity]:
+    runtime = runtime or DummyOSShadowPlanStoreRuntime(coordinator)
     return [
         DummyOSPlanStoreSensor(runtime),
         *[DummyOSPlanStoreSlotSensor(runtime, slot) for slot in range(1, SLOT_COUNT + 1)],
