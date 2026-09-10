@@ -1,5 +1,52 @@
 # GitHub Release
 
+**Tag:** `0.2.0-alpha.15`  
+**Release title:** Dummy OS Energy 0.2.0-alpha.15 - Step 6B Performance and Version Hotfix
+
+## Dummy OS Energy 0.2.0-alpha.15
+
+Deze prerelease is een gerichte hotfix na de live alpha.14-validatie. Hij corrigeert de versiebronfout van alpha.14 en vermindert de extra Step-6B Plan Store Bridge-belasting zonder de plannerarchitectuur of safetygrenzen te wijzigen.
+
+### Opgelost
+- De repositoryversie staat vóór tagging consequent op `0.2.0-alpha.15` in `const.py`, `manifest.json` en de release-consistency gate.
+- De Plan Store Bridge gebruikt een deterministische material-input fingerprint.
+- Binnen hetzelfde native kwartier wordt de zware input -> reserve -> preview -> plan72 -> grid-support keten niet opnieuw berekend wanneer plannerrelevante input inhoudelijk gelijk blijft.
+- Echte wijzigingen in profiel, SOC, historie/evaluaties, solar of prijzen invalidëren de cache direct.
+- Een nieuw native 15-minutenkwartier forceert opnieuw een geldige plannerberekening.
+- De bestaande Plan Store, candidate-identiteit, reconciliation en persistente shadow-store blijven inhoudelijk ongewijzigd.
+
+### Architectuur en safety ongewijzigd
+- native resolutie: 15 minuten;
+- horizon: 72 uur;
+- exact 288 slots;
+- Plan Store: exact 3 slots;
+- `shadow_only=true`;
+- `shadow_store_write=true`;
+- `operational_plan_store_write=false`;
+- `active_use_permitted=false`;
+- `physical_execution_authority=false`;
+- `scheduler_invoked=false`;
+- `safety_chain_invoked=false`;
+- `service_calls_performed=false`.
+
+### Bewust niet gewijzigd
+- Grid Support shadow-testgrens blijft 0,25 kWh;
+- geen Planner Stap 7 Scheduler;
+- geen Safety/Prestart;
+- geen Execution;
+- geen fysieke Home Assistant-servicecalls;
+- geen dashboardmigratie.
+
+### Live-validatie na installatie
+- Home Assistant moet de integratie als `0.2.0-alpha.15` tonen.
+- Controleer de startup/update-log specifiek op nieuwe `dummy_os_data` main-threadwaarschuwingen.
+- `sensor.dummy_os_energy_do_plan_store_bridge` moet `ready` blijven en `skipped_refreshes` moet bij ongewijzigde refreshes kunnen oplopen.
+- Een echte plannerinputwijziging of nieuwe kwartiergrens moet de bridge opnieuw laten rekenen.
+- Alle shadow/safetyvlaggen moeten gesloten blijven.
+
+---
+# GitHub Release
+
 **Tag:** `0.2.0-alpha.13`  
 **Release title:** Dummy OS Energy 0.2.0-alpha.13 - Planner Step 5 Grid Support Shadow
 
