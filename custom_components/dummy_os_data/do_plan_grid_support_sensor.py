@@ -50,6 +50,7 @@ def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
     from .do_plan_72h import build_do_plan_72h
     from .do_plan_preview import build_do_plan_preview
     from .sensor import DummyOSPlanReserveSOCSensor, _build_plan_input_from_snapshot, _build_energy_need_from_snapshot, _build_reserve_from_snapshot
+    from .do_plan_execution_preview_sensor import build_do_plan_execution_preview_sensors
 
     class DummyOSPlanGridSupportSensor(DummyOSPlanReserveSOCSensor):
         _attr_name = "DO Plan Grid Support"
@@ -142,4 +143,4 @@ def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
             result["skipped_refreshes"] = self._skipped_refreshes
             return result
 
-    return [DummyOSPlanGridSupportSensor(coordinator),DummyOSPlanStoreBridgeSensor(coordinator),*build_do_plan_store_sensors(coordinator,runtime),*build_do_plan_scheduler_sensors(coordinator),*build_do_plan_safety_sensors(coordinator)]
+    return [DummyOSPlanGridSupportSensor(coordinator),DummyOSPlanStoreBridgeSensor(coordinator),*build_do_plan_store_sensors(coordinator,runtime),*build_do_plan_scheduler_sensors(coordinator),*build_do_plan_safety_sensors(coordinator),*build_do_plan_execution_preview_sensors(coordinator)]
