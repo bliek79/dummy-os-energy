@@ -1,0 +1,38 @@
+name: Prepare alpha19 metadata
+on:
+  push:
+    branches: [release-alpha19]
+permissions:
+  contents: write
+jobs:
+  prepare:
+    if: github.event.head_commit.message != 'Apply alpha.19 release metadata'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release-alpha19
+      - name: Apply exact release metadata
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          const = Path('custom_components/dummy_os_data/const.py')
+          text = const.read_text()
+          text = text.replace('VERSION = "0.2.0-alpha.18"', 'VERSION = "0.2.0-alpha.19"')
+          const.write_text(text)
+          manifest = Path('custom_components/dummy_os_data/manifest.json')
+          data = json.loads(manifest.read_text())
+          data['version'] = '0.2.0-alpha.19'
+          manifest.write_text(json.dumps(data, indent=2) + '\n')
+          test = Path('tests/test_release_consistency.py')
+          text = test.read_text().replace('VERSION = "0.2.0-alpha.18"', 'VERSION = "0.2.0-alpha.19"')
+          test.write_text(text)
+          PY
+          rm .github/workflows/prepare-alpha19.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add custom_components/dummy_os_data/const.py custom_components/dummy_os_data/manifest.json tests/test_release_consistency.py .github/workflows/prepare-alpha19.yml
+          git commit -m 'Apply alpha.19 release metadata'
+          git push origin HEAD:release-alpha19
