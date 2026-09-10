@@ -40,15 +40,22 @@ class DummyOSShadowPlanStoreRuntime:
             self.persistence_error=type(err).__name__; self._notify(); return False
         self.snapshot=deepcopy(snapshot); self.persistence_error=None; self.loaded=True; self._notify(); return True
     async def async_apply_bridge_candidates(self,candidates:list[dict[str,Any]],now:datetime)->dict[str,Any]:
-        """Persist only the isolated shadow-store result of one bridge refresh."""
+        """Persist one atomic isolated shadow-store bridge refresh.
+
+        Cleanup runs first. Obsolete automatic pending membership is then pruned
+        before new candidates are synchronized, so a fully occupied automatic
+        store can accept a completely new candidate set in the same refresh.
+        Revised candidates with the same planner identity are retained by prune
+        and reconciled in-place by sync, preserving plan_id and slot_id.
+        """
         await self.async_ensure_loaded(); valid,blockers=validate_store_snapshot(self.snapshot)
         if not valid:
             result={"status":"blocked","changed":False,"blockers":blockers}; self.last_bridge_result=result; self._notify(); return result
         cleaned,cleanup=cleanup_automatic_slots(self.snapshot,now)
-        updated,sync=sync_automatic_candidates(cleaned,candidates,now)
-        reconciled,reconcile=prune_obsolete_automatic_pending(updated,candidates,now)
-        changed=bool(cleanup.get("changed") or sync.get("changed") or reconcile.get("changed")); saved=True
-        if changed:saved=await self.async_save_snapshot(reconciled)
+        pruned,reconcile=prune_obsolete_automatic_pending(cleaned,candidates,now)
+        updated,sync=sync_automatic_candidates(pruned,candidates,now)
+        changed=bool(cleanup.get("changed") or reconcile.get("changed") or sync.get("changed")); saved=True
+        if changed:saved=await self.async_save_snapshot(updated)
         result={"status":"ready" if saved else "blocked","changed":changed,"persistence_saved":saved,"cleanup":cleanup,"sync":sync,"reconcile":reconcile,"blockers":[] if saved else ["persistence_write_failed"],"operational_plan_store_write":False,"scheduler_invoked":False,"safety_chain_invoked":False,"service_calls_performed":False,"physical_execution_authority":False}
         self.last_bridge_result=result; self._notify(); return result
     def summary(self)->dict[str,Any]:
