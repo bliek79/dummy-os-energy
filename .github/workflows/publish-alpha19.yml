@@ -1,0 +1,39 @@
+name: Publish alpha19 prerelease
+on:
+  push:
+    branches: [publish-alpha19]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@v4
+        with:
+          ref: 5ca0c16faacd3506d7041134fdbce732dddbd2db
+      - name: Verify exact release metadata and manual lifecycle
+        shell: bash
+        run: |
+          grep -F 'VERSION = "0.2.0-alpha.19"' custom_components/dummy_os_data/const.py
+          grep -F '"version": "0.2.0-alpha.19"' custom_components/dummy_os_data/manifest.json
+          grep -F 'def finalize_manual_draft' custom_components/dummy_os_data/do_plan_manual_lifecycle.py
+          grep -F 'transaction_lock' custom_components/dummy_os_data/do_plan_store_sensor.py
+          grep -F 'physical_execution_authority": False' custom_components/dummy_os_data/do_plan_manual_interface_sensor.py
+      - name: Build Home Assistant installation package
+        shell: bash
+        run: |
+          zip -r Dummy_OS_Energy_0.2.0-alpha.19_HA_install.zip custom_components/dummy_os_data -x '*/__pycache__/*' '*.pyc'
+          sha256sum Dummy_OS_Energy_0.2.0-alpha.19_HA_install.zip > SHA256SUMS-0.2.0-alpha.19.txt
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create 0.2.0-alpha.19 \
+            Dummy_OS_Energy_0.2.0-alpha.19_HA_install.zip \
+            SHA256SUMS-0.2.0-alpha.19.txt \
+            --target 5ca0c16faacd3506d7041134fdbce732dddbd2db \
+            --title 'Dummy OS Energy 0.2.0-alpha.19 - Manual Plan Lifecycle' \
+            --notes-file RELEASE_NOTES_0.2.0-alpha.19.md \
+            --prerelease
