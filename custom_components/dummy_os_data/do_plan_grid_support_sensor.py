@@ -6,6 +6,7 @@ from typing import Any
 from .do_plan_grid_support import build_do_plan_grid_support
 from .do_plan_store_bridge import build_do_plan_store_bridge
 from .do_plan_store_sensor import build_do_plan_store_sensors, get_do_plan_store_runtime
+from .do_plan_scheduler_sensor import build_do_plan_scheduler_sensors
 
 
 def _stable_material(value: Any) -> str:
@@ -140,4 +141,4 @@ def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
             result["skipped_refreshes"] = self._skipped_refreshes
             return result
 
-    return [DummyOSPlanGridSupportSensor(coordinator),DummyOSPlanStoreBridgeSensor(coordinator),*build_do_plan_store_sensors(coordinator,runtime)]
+    return [DummyOSPlanGridSupportSensor(coordinator),DummyOSPlanStoreBridgeSensor(coordinator),*build_do_plan_store_sensors(coordinator,runtime),*build_do_plan_scheduler_sensors(coordinator)]
