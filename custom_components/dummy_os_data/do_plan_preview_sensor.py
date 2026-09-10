@@ -4,20 +4,31 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
 from .do_plan_preview import build_do_plan_preview
+
+INPUT_ENTITY = "sensor.do_plan_input_72h"
+RESERVE_ENTITY = "sensor.do_plan_reserve_soc"
+
+
+def _state_contract(hass: Any, entity_id: str) -> dict[str, Any]:
+    """Copy one already-published upstream contract on the HA main thread."""
+    state = hass.states.get(entity_id)
+    if state is None or state.state in {"unknown", "unavailable", "none", "None", ""}:
+        return {"status": "unavailable", "valid": False, "blockers": [f"{entity_id}_unavailable"]}
+    result = dict(state.attributes)
+    result["status"] = state.state
+    return result
 
 
 def build_do_plan_preview_sensors(coordinator: Any) -> list[Any]:
-    """Build Step-4 sensors after sensor.py has finished importing.
+    """Build Step-4 preview from existing Step-1 and Step-3 contracts.
 
-    The lazy import avoids a module cycle while reusing the already validated
-    Step-1/2/3 sensor chain and its update listeners.
+    Preview must not rebuild Forecast -> Planner -> Model Health. The upstream
+    entities already own those calculations and publish the validated contract.
     """
-    from .sensor import (
-        DummyOSPlanReserveSOCSensor,
-        _build_plan_input_from_snapshot,
-        _build_reserve_from_snapshot,
-    )
+    from .sensor import DummyOSPlanReserveSOCSensor
 
     class DummyOSPlanPreviewSensor(DummyOSPlanReserveSOCSensor):
         """Observer-only safety, solar-headroom and trade preview."""
@@ -36,9 +47,16 @@ def build_do_plan_preview_sensors(coordinator: Any) -> list[Any]:
         MAX_CHARGE_POWER_W = 3200
         MAX_DISCHARGE_POWER_W = 3200
 
+        def _snapshot(self) -> dict[str, Any]:
+            return {
+                "now": dt_util.utcnow(),
+                "input_result": _state_contract(self.hass, INPUT_ENTITY),
+                "reserve_result": _state_contract(self.hass, RESERVE_ENTITY),
+            }
+
         def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-            input_result = _build_plan_input_from_snapshot(snapshot)
-            reserve_result = _build_reserve_from_snapshot(snapshot)
+            input_result = snapshot["input_result"]
+            reserve_result = snapshot["reserve_result"]
             result = build_do_plan_preview(
                 input_result=input_result,
                 reserve_result=reserve_result,
@@ -49,10 +67,11 @@ def build_do_plan_preview_sensors(coordinator: Any) -> list[Any]:
                 max_charge_power_w=self.MAX_CHARGE_POWER_W,
                 max_discharge_power_w=self.MAX_DISCHARGE_POWER_W,
             )
-            result["input_entity"] = "sensor.do_plan_input_72h"
-            result["reserve_entity"] = "sensor.do_plan_reserve_soc"
+            result["input_entity"] = INPUT_ENTITY
+            result["reserve_entity"] = RESERVE_ENTITY
             result["soc_source_entity"] = reserve_result.get("soc_source_entity")
             result["source_layer_status"] = reserve_result.get("source_layer_status")
+            result["dependency_mode"] = "published_upstream_contracts"
             return result
 
     return [DummyOSPlanPreviewSensor(coordinator)]
