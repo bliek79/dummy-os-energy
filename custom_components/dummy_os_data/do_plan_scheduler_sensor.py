@@ -7,6 +7,7 @@ from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN, NAME, VERSION
@@ -27,8 +28,6 @@ class DummyOSPlanSchedulerRuntime:
         current = now or datetime.now(timezone.utc)
         summary = self.store_runtime.summary()
         snapshot = self.store_runtime.snapshot
-        # Scheduler timing must respect max_start_delay_minutes exactly at each
-        # evaluation. The decision signature itself remains native-quarter stable.
         key = (
             current.astimezone(timezone.utc).isoformat(),
             repr(snapshot),
@@ -97,7 +96,9 @@ class _SchedulerEntityMixin:
             self._remove_coordinator_listener()
         await super().async_will_remove_from_hass()
 
+    @callback
     def _handle_update(self) -> None:
+        """Handle event-loop owned coordinator/store updates."""
         self.async_write_ha_state()
 
 
