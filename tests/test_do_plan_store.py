@@ -1,4 +1,7 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import subprocess
+import sys
 
 from custom_components.dummy_os_data.do_plan_store import (
     cleanup_automatic_slots,
@@ -101,3 +104,29 @@ def test_corrupt_store_is_not_silently_treated_as_empty():
     valid, blockers = validate_store_snapshot({"schema_version": 1, "slots": []})
     assert valid is False
     assert "slot_structure_invalid" in blockers
+
+
+def _plan_id_from_fresh_process(signature: str) -> str:
+    repo_root = Path(__file__).resolve().parents[1]
+    module_path = repo_root / "custom_components" / "dummy_os_data" / "do_plan_store.py"
+    code = (
+        "from datetime import datetime, timezone; "
+        "import importlib.util; "
+        f"spec=importlib.util.spec_from_file_location('do_plan_store_pure', {str(module_path)!r}); "
+        "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+        f"print(module._plan_id('automatic_72h_planner', 1, datetime(2026,9,10,8,0,tzinfo=timezone.utc), {signature!r}))"
+    )
+    return subprocess.check_output([sys.executable, "-c", code], cwd=repo_root, text=True).strip()
+
+
+def test_plan_id_is_stable_across_fresh_python_processes():
+    first = _plan_id_from_fresh_process("sig-restart-stable")
+    second = _plan_id_from_fresh_process("sig-restart-stable")
+    assert first == second
+    assert first.startswith("do-plan-20260910T080000Z-aut-")
+
+
+def test_new_automatic_plan_ids_differ_for_different_signatures():
+    first = _plan_id_from_fresh_process("sig-a")
+    second = _plan_id_from_fresh_process("sig-b")
+    assert first != second
