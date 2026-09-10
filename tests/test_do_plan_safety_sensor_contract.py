@@ -29,8 +29,10 @@ def test_safety_prestart_contains_no_physical_control_path():
         assert forbidden not in combined
 
 
-def test_safety_uses_existing_reserve_contract_not_second_reserve_formula():
+def test_safety_consumes_existing_reserve_entity_without_second_planner_calculation():
     adapter=(ROOT/"custom_components/dummy_os_data/do_plan_safety_sensor.py").read_text()
-    assert "_build_reserve_from_snapshot" in adapter
-    assert "_planner_runtime_snapshot" in adapter
-    assert "reserve_soc_target_percent" not in adapter
+    assert 'RESERVE_ENTITY = "sensor.do_plan_reserve_soc"' in adapter
+    assert "hass.states.get(RESERVE_ENTITY)" in adapter
+    assert "_build_reserve_from_snapshot" not in adapter
+    assert "_planner_runtime_snapshot" not in adapter
+    assert "HomeBaselineForecast" not in adapter
