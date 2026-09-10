@@ -13,12 +13,19 @@ def _load_refresh_key():
     package.__path__ = [str(MODULE_PATH.parent)]
     sys.modules.setdefault("custom_components", types.ModuleType("custom_components"))
     sys.modules["custom_components.dummy_os_data"] = package
-    for name in ("do_plan_grid_support", "do_plan_store_bridge", "do_plan_store_sensor"):
+    for name in (
+        "do_plan_grid_support",
+        "do_plan_store_bridge",
+        "do_plan_store_sensor",
+        "do_plan_scheduler_sensor",
+    ):
         module = types.ModuleType(f"custom_components.dummy_os_data.{name}")
         if name == "do_plan_grid_support":
             module.build_do_plan_grid_support = lambda **kwargs: {}
         elif name == "do_plan_store_bridge":
             module.build_do_plan_store_bridge = lambda **kwargs: {}
+        elif name == "do_plan_scheduler_sensor":
+            module.build_do_plan_scheduler_sensors = lambda *args, **kwargs: []
         else:
             module.DummyOSShadowPlanStoreRuntime = object
             module.build_do_plan_store_sensors = lambda *args, **kwargs: []
