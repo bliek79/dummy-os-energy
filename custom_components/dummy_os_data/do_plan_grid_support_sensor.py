@@ -5,7 +5,8 @@ import hashlib
 from typing import Any
 from .do_plan_grid_support import build_do_plan_grid_support
 from .do_plan_store_bridge import build_do_plan_store_bridge
-from .do_plan_store_sensor import DummyOSShadowPlanStoreRuntime, build_do_plan_store_sensors
+from .do_plan_store_sensor import build_do_plan_store_sensors, get_do_plan_store_runtime
+from .do_plan_scheduler_sensor import build_do_plan_scheduler_sensors
 
 
 def _stable_material(value: Any) -> str:
@@ -20,13 +21,7 @@ def _stable_material(value: Any) -> str:
 
 
 def build_plan_store_bridge_refresh_key(snapshot: dict[str, Any]) -> str:
-    """Fingerprint only material planner inputs plus the native 15-minute bucket.
-
-    High-frequency coordinator updates that do not change planner inputs no longer
-    cause the expensive input -> reserve -> preview -> plan72 -> grid-support
-    chain to be rebuilt. A genuine source/profile/SOC/history change invalidates
-    the key immediately. Time itself invalidates only on the next native quarter.
-    """
+    """Fingerprint only material planner inputs plus the native 15-minute bucket."""
     now = snapshot.get("now")
     if isinstance(now, datetime):
         now_utc = now.astimezone(timezone.utc)
@@ -80,7 +75,7 @@ def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
         def extra_state_attributes(self) -> dict[str, Any]:
             return dict(self._result())
 
-    runtime = DummyOSShadowPlanStoreRuntime(coordinator)
+    runtime = get_do_plan_store_runtime(coordinator)
 
     class DummyOSPlanStoreBridgeSensor(DummyOSPlanReserveSOCSensor):
         _attr_name = "DO Plan Store Bridge"
@@ -146,4 +141,4 @@ def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
             result["skipped_refreshes"] = self._skipped_refreshes
             return result
 
-    return [DummyOSPlanGridSupportSensor(coordinator),DummyOSPlanStoreBridgeSensor(coordinator),*build_do_plan_store_sensors(coordinator,runtime)]
+    return [DummyOSPlanGridSupportSensor(coordinator),DummyOSPlanStoreBridgeSensor(coordinator),*build_do_plan_store_sensors(coordinator,runtime),*build_do_plan_scheduler_sensors(coordinator)]
