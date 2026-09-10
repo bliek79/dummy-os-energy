@@ -28,6 +28,8 @@ class DummyOSPlanSchedulerRuntime:
         current = now or datetime.now(timezone.utc)
         summary = self.store_runtime.summary()
         snapshot = self.store_runtime.snapshot
+        # Scheduler timing must respect max_start_delay_minutes exactly at each
+        # evaluation. The decision signature itself remains native-quarter stable.
         key = (
             current.astimezone(timezone.utc).isoformat(),
             repr(snapshot),
