@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "dummy_os_data"
 NAME = "Dummy OS Energy"
-VERSION = "0.2.0-alpha.17"
+VERSION = "0.2.0-alpha.18"
 
 # Legacy Energy Forecast source key retained for config-entry compatibility only.
 # Energy Forecast production always consumes the canonical Source Home Power entity.
@@ -23,68 +23,74 @@ HOME_POWER_POSITIVE_DIRECTION_OPTIONS = [
 # Grid power is one bidirectional source: positive = import, negative = export.
 CONF_GRID_NET_POWER_ENTITY = "grid_net_power_entity"
 CONF_DATA_SOLAR_POWER_ENTITY = "data_solar_power_entity"
-CONF_BATTERY_CHARGE_POWER_ENTITY = "battery_charge_power_entity"
-CONF_BATTERY_DISCHARGE_POWER_ENTITY = "battery_discharge_power_entity"
-DATA_POWER_SOURCE_KEYS = [
-    CONF_GRID_NET_POWER_ENTITY,
-    CONF_DATA_SOLAR_POWER_ENTITY,
-    CONF_BATTERY_CHARGE_POWER_ENTITY,
-    CONF_BATTERY_DISCHARGE_POWER_ENTITY,
-]
+CONF_DATA_BATTERY_CHARGE_POWER_ENTITY = "data_battery_charge_power_entity"
+CONF_DATA_BATTERY_DISCHARGE_POWER_ENTITY = "data_battery_discharge_power_entity"
 
-# Temporary alpha.11.5 option keys retained only to prefill migration safely.
+# Legacy split-grid keys are read-only migration inputs.
 LEGACY_CONF_GRID_IMPORT_POWER_ENTITY = "grid_import_power_entity"
 LEGACY_CONF_GRID_EXPORT_POWER_ENTITY = "grid_export_power_entity"
 
-CONF_TARIFF_PROFILE_ID = "tariff_profile_id"
-CONF_TARIFF_SUPPLIER = "tariff_supplier"
-CONF_TARIFF_VALID_FROM = "tariff_valid_from"
-CONF_VAT_PERCENT = "vat_percent"
-CONF_ELECTRICITY_IMPORT_SUPPLIER = "electricity_import_supplier_incl_vat"
-CONF_ELECTRICITY_IMPORT_TAX = "electricity_import_tax_incl_vat"
-CONF_ELECTRICITY_EXPORT_SUPPLIER = "electricity_export_supplier_incl_vat"
-CONF_ELECTRICITY_EXPORT_TAX = "electricity_export_tax_incl_vat"
-CONF_ELECTRICITY_FIXED_SUPPLY_PER_DAY = "electricity_fixed_supply_per_day"
-CONF_ELECTRICITY_GRID_PER_DAY = "electricity_grid_per_day"
-CONF_ELECTRICITY_TAX_CREDIT_PER_DAY = "electricity_tax_credit_per_day"
-CONF_GAS_MARKET_ENTITY = "gas_market_entity"
-CONF_GAS_SUPPLIER = "gas_supplier_incl_vat"
-CONF_GAS_TAX = "gas_tax_incl_vat"
-CONF_GAS_FIXED_SUPPLY_PER_DAY = "gas_fixed_supply_per_day"
-CONF_GAS_GRID_PER_DAY = "gas_grid_per_day"
+# Backward-compatible Python aliases for older internal imports.
+CONF_GRID_IMPORT_POWER_ENTITY = LEGACY_CONF_GRID_IMPORT_POWER_ENTITY
+CONF_GRID_EXPORT_POWER_ENTITY = LEGACY_CONF_GRID_EXPORT_POWER_ENTITY
 
-DEFAULT_GAS_MARKET_ENTITY = "sensor.energyzero_today_gas_current_hour_price"
-GAS_VARIABLE_ADDON_ENTITY = "input_number.gas_markup_per_m3"
+DEFAULT_GRID_NET_POWER_ENTITY = "sensor.home_grid_power"
+DEFAULT_GRID_IMPORT_POWER_ENTITY = "sensor.home_grid_import_power"
+DEFAULT_GRID_EXPORT_POWER_ENTITY = "sensor.home_grid_export_power"
+DEFAULT_DATA_SOLAR_POWER_ENTITY = "sensor.home_solar_power"
+DEFAULT_DATA_BATTERY_CHARGE_POWER_ENTITY = "sensor.home_battery_charge_power"
+DEFAULT_DATA_BATTERY_DISCHARGE_POWER_ENTITY = "sensor.home_battery_discharge_power"
 
-CONF_SOLAR_ACTUAL_TOTAL_ENTITY = "solar_actual_total_entity"
-CONF_SOLAR_ACTUAL_NORTH_DC_ENTITY = "solar_actual_north_dc_entity"
-CONF_SOLAR_ACTUAL_SOUTH_DC_ENTITY = "solar_actual_south_dc_entity"
-CONF_SOLAR_LATITUDE = "solar_latitude"
-CONF_SOLAR_LONGITUDE = "solar_longitude"
-CONF_SOLAR_NORTH_DC_KWP = "solar_north_dc_kwp"
-CONF_SOLAR_NORTH_AC_KW = "solar_north_ac_kw"
-CONF_SOLAR_NORTH_TILT = "solar_north_tilt"
-CONF_SOLAR_NORTH_AZIMUTH = "solar_north_open_meteo_azimuth"
-CONF_SOLAR_NORTH_FACTOR = "solar_north_performance_factor"
-CONF_SOLAR_SOUTH_DC_KWP = "solar_south_dc_kwp"
-CONF_SOLAR_SOUTH_AC_KW = "solar_south_ac_kw"
-CONF_SOLAR_SOUTH_TILT = "solar_south_tilt"
-CONF_SOLAR_SOUTH_AZIMUTH = "solar_south_open_meteo_azimuth"
-CONF_SOLAR_SOUTH_FACTOR = "solar_south_performance_factor"
+CONF_GRID_NET_POWER_POSITIVE_DIRECTION = "grid_net_power_positive_direction"
+GRID_NET_POWER_POSITIVE_IMPORT = "import"
+GRID_NET_POWER_POSITIVE_EXPORT = "export"
+GRID_NET_POWER_POSITIVE_DIRECTION_OPTIONS = [
+    GRID_NET_POWER_POSITIVE_IMPORT,
+    GRID_NET_POWER_POSITIVE_EXPORT,
+]
 
-DEFAULT_SOLAR_ACTUAL_TOTAL_ENTITY = "sensor.sb3_6_1av_41_857_pv_power"
-DEFAULT_SOLAR_ACTUAL_NORTH_DC_ENTITY = "sensor.sb3_6_1av_41_857_pv_power_a"
-DEFAULT_SOLAR_ACTUAL_SOUTH_DC_ENTITY = "sensor.sb3_6_1av_41_857_pv_power_b"
+CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"
+CONF_BATTERY_MAX_CHARGE_POWER_W = "battery_max_charge_power_w"
+CONF_BATTERY_MAX_DISCHARGE_POWER_W = "battery_max_discharge_power_w"
+CONF_BATTERY_MIN_SOC_PERCENT = "battery_min_soc_percent"
+CONF_BATTERY_RESERVE_SOC_PERCENT = "battery_reserve_soc_percent"
+CONF_BATTERY_EXECUTION_BUFFER_PERCENT = "battery_execution_buffer_percent"
+CONF_BATTERY_CHARGE_EFFICIENCY_PERCENT = "battery_charge_efficiency_percent"
+CONF_BATTERY_DISCHARGE_EFFICIENCY_PERCENT = "battery_discharge_efficiency_percent"
+CONF_BATTERY_SOC_ENTITY = "battery_soc_entity"
 
-PLATFORMS = ["sensor", "select", "binary_sensor"]
+DEFAULT_BATTERY_CAPACITY_KWH = 7.2
+DEFAULT_BATTERY_MAX_CHARGE_POWER_W = 3200
+DEFAULT_BATTERY_MAX_DISCHARGE_POWER_W = 3200
+DEFAULT_BATTERY_MIN_SOC_PERCENT = 5.0
+DEFAULT_BATTERY_RESERVE_SOC_PERCENT = 7.0
+DEFAULT_BATTERY_EXECUTION_BUFFER_PERCENT = 2.0
+DEFAULT_BATTERY_CHARGE_EFFICIENCY_PERCENT = 92.0
+DEFAULT_BATTERY_DISCHARGE_EFFICIENCY_PERCENT = 92.0
+DEFAULT_BATTERY_SOC_ENTITY = "sensor.anker_solix_solarbank_max_ac_185_soc"
 
-STORAGE_VERSION = 1
-STORAGE_KEY = f"{DOMAIN}.home_forecast"
+CONF_MINIMUM_TRADE_MARGIN = "minimum_trade_margin"
+DEFAULT_MINIMUM_TRADE_MARGIN = 0.10
+
+CONF_IMPORT_MARKUP_EUR_KWH = "import_markup_eur_kwh"
+CONF_EXPORT_MARKUP_EUR_KWH = "export_markup_eur_kwh"
+DEFAULT_IMPORT_MARKUP_EUR_KWH = 0.0
+DEFAULT_EXPORT_MARKUP_EUR_KWH = 0.0
+
+CONF_PRICE_RESOLUTION_MINUTES = "price_resolution_minutes"
+PRICE_RESOLUTION_OPTIONS = [15, 60]
+DEFAULT_PRICE_RESOLUTION_MINUTES = 15
+
+CONF_ELECTRICITY_PRICE_SOURCE = "electricity_price_source"
+ELECTRICITY_PRICE_SOURCE_STROOMVOORSPELLER = "stroomvoorspeller"
+DEFAULT_ELECTRICITY_PRICE_SOURCE = ELECTRICITY_PRICE_SOURCE_STROOMVOORSPELLER
+
+CONF_GAS_PRICE_EUR_M3 = "gas_price_eur_m3"
+CONF_GAS_FIXED_COST_EUR_DAY = "gas_fixed_cost_eur_day"
+DEFAULT_GAS_PRICE_EUR_M3 = 1.56
+DEFAULT_GAS_FIXED_COST_EUR_DAY = 0.32055
+
 ENERGY_STORE_SCHEMA_VERSION = 2
-ENERGY_EVALUATION_SCHEMA_VERSION = 1
-SOLAR_STORAGE_VERSION = 1
-SOLAR_STORAGE_KEY = f"{DOMAIN}.solar_evaluation"
-
 PROFILE_CONTRACT_VERSION = 1
 PROFILE_NORMAL = "normal"
 PROFILE_AWAY = "away"
@@ -92,12 +98,6 @@ PROFILE_UNCLASSIFIED = "unclassified"
 PROFILE_MIXED = "mixed"
 PROFILE_LEARNING_OPTIONS = [PROFILE_NORMAL, PROFILE_AWAY]
 PROFILE_OPTIONS = [PROFILE_NORMAL, PROFILE_AWAY, PROFILE_UNCLASSIFIED]
-
-QUARTER_MINUTES = 15
-QUARTER_SECONDS = QUARTER_MINUTES * 60
-QUARTERS_PER_DAY = 96
 FORECAST_HORIZON_HOURS = 72
-FORECAST_SLOTS = FORECAST_HORIZON_HOURS * 60 // QUARTER_MINUTES
-MAX_HISTORY_DAYS = 400
-MIN_VALID_COVERAGE = 0.90
-SOLAR_MIN_VALID_COVERAGE = 0.90
+QUARTER_MINUTES = 15
+FORECAST_SLOT_COUNT = int(FORECAST_HORIZON_HOURS * 60 / QUARTER_MINUTES)
