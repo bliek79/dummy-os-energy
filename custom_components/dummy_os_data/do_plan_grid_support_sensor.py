@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import Any
 from .do_plan_grid_support import build_do_plan_grid_support
+from .do_plan_store_sensor import build_do_plan_store_sensors
 
 def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
     from .sensor import DummyOSPlanReserveSOCSensor, _build_plan_input_from_snapshot, _build_energy_need_from_snapshot
@@ -29,4 +30,6 @@ def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
         @property
         def extra_state_attributes(self) -> dict[str, Any]:
             return dict(self._result())
-    return [DummyOSPlanGridSupportSensor(coordinator)]
+    # Step 6B registers its isolated store sensors through the existing planner
+    # sensor bundle. This avoids unrelated edits to the large central registry.
+    return [DummyOSPlanGridSupportSensor(coordinator), *build_do_plan_store_sensors(coordinator)]
