@@ -13,6 +13,31 @@ def _load_refresh_key():
     package.__path__ = [str(MODULE_PATH.parent)]
     sys.modules.setdefault("custom_components", types.ModuleType("custom_components"))
     sys.modules["custom_components.dummy_os_data"] = package
+
+    # The CI unit environment intentionally does not install Home Assistant.
+    # This test imports only the pure refresh-key helper, so provide the minimal
+    # adapter stubs required by module import without exercising HA runtime APIs.
+    homeassistant = types.ModuleType("homeassistant")
+    helpers = types.ModuleType("homeassistant.helpers")
+    entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
+    entity_registry.async_get = lambda *args, **kwargs: None
+    util = types.ModuleType("homeassistant.util")
+    dt = types.ModuleType("homeassistant.util.dt")
+    dt.utcnow = lambda: datetime.now(timezone.utc)
+    homeassistant.helpers = helpers
+    homeassistant.util = util
+    helpers.entity_registry = entity_registry
+    util.dt = dt
+    sys.modules["homeassistant"] = homeassistant
+    sys.modules["homeassistant.helpers"] = helpers
+    sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
+    sys.modules["homeassistant.util"] = util
+    sys.modules["homeassistant.util.dt"] = dt
+
+    const = types.ModuleType("custom_components.dummy_os_data.const")
+    const.DOMAIN = "dummy_os_data"
+    sys.modules[const.__name__] = const
+
     for name in (
         "do_plan_grid_support",
         "do_plan_store_bridge",

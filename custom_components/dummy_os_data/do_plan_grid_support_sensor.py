@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 from typing import Any
+from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
+from .const import DOMAIN
 from .do_plan_grid_support import build_do_plan_grid_support
 from .do_plan_store_bridge import build_do_plan_store_bridge
 from .do_plan_store_sensor import build_do_plan_store_sensors, get_do_plan_store_runtime
@@ -11,7 +14,6 @@ from .do_plan_safety_sensor import build_do_plan_safety_sensors
 
 
 def _stable_material(value: Any) -> str:
-    """Return a compact stable representation for planner-refresh fingerprinting."""
     if isinstance(value, dict): return "{" + ",".join(f"{k}:{_stable_material(value[k])}" for k in sorted(value)) + "}"
     if isinstance(value, (list, tuple)): return "[" + ",".join(_stable_material(item) for item in value) + "]"
     if isinstance(value, datetime): return value.astimezone(timezone.utc).isoformat()
@@ -19,7 +21,6 @@ def _stable_material(value: Any) -> str:
 
 
 def build_plan_store_bridge_refresh_key(snapshot: dict[str, Any]) -> str:
-    """Fingerprint only material planner inputs plus the native 15-minute bucket."""
     now = snapshot.get("now")
     if isinstance(now, datetime):
         now_utc = now.astimezone(timezone.utc); quarter = now_utc.replace(minute=(now_utc.minute // 15) * 15, second=0, microsecond=0).isoformat()
@@ -28,25 +29,42 @@ def build_plan_store_bridge_refresh_key(snapshot: dict[str, Any]) -> str:
     return hashlib.sha256(_stable_material(material).encode("utf-8")).hexdigest()
 
 
+def _state_contract(hass: Any, unique_id: str) -> tuple[str | None, dict[str, Any]]:
+    entity_id = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, unique_id)
+    state = hass.states.get(entity_id) if entity_id else None
+    if state is None or state.state in {"unknown", "unavailable", "none", "None", ""}:
+        return entity_id, {"status": "unavailable", "valid": False, "blockers": [f"{unique_id}_unavailable"]}
+    result = dict(state.attributes); result["status"] = state.state
+    return entity_id, result
+
+
 def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
     from .do_plan_72h import build_do_plan_72h
     from .do_plan_preview import build_do_plan_preview
     from .sensor import DummyOSPlanReserveSOCSensor, _build_plan_input_from_snapshot, _build_energy_need_from_snapshot, _build_reserve_from_snapshot
     from .do_plan_execution_preview_sensor import build_do_plan_execution_preview_sensors
     from .do_plan_manual_interface_sensor import build_do_plan_manual_interface_sensors
+
     class DummyOSPlanGridSupportSensor(DummyOSPlanReserveSOCSensor):
         _attr_name = "DO Plan Grid Support"
         _attr_unique_id = "do_plan_grid_support"
         _attr_suggested_object_id = "do_plan_grid_support"
         _attr_icon = "mdi:transmission-tower-import"
         _unrecorded_attributes=frozenset({"selected_charge_slots"}); GRID_CHARGE_TRIGGER_KWH=0.25
+        def _snapshot(self)->dict[str,Any]:
+            input_entity,input_result=_state_contract(self.hass,"do_plan_input_72h")
+            need_entity,need=_state_contract(self.hass,"do_plan_energy_need")
+            return {"now":dt_util.utcnow(),"input_entity":input_entity,"energy_need_entity":need_entity,"input_result":input_result,"energy_need_result":need}
         def _calculate_result(self,snapshot:dict[str,Any])->dict[str,Any]:
-            input_result=_build_plan_input_from_snapshot(snapshot); need=_build_energy_need_from_snapshot(snapshot); result=build_do_plan_grid_support(input_result=input_result,energy_need_result=need,trigger_kwh=self.GRID_CHARGE_TRIGGER_KWH); result["input_entity"]="sensor.do_plan_input_72h"; result["energy_need_entity"]="sensor.do_plan_energy_need"; result["soc_source_entity"]=need.get("soc_source_entity"); result["source_layer_status"]=need.get("source_layer_status"); return result
+            input_result=snapshot["input_result"]; need=snapshot["energy_need_result"]
+            result=build_do_plan_grid_support(input_result=input_result,energy_need_result=need,trigger_kwh=self.GRID_CHARGE_TRIGGER_KWH)
+            result["input_entity"]=snapshot["input_entity"]; result["energy_need_entity"]=snapshot["energy_need_entity"]; result["soc_source_entity"]=need.get("soc_source_entity"); result["source_layer_status"]=need.get("source_layer_status"); result["dependency_mode"]="published_upstream_contracts"; return result
         def _initial_result(self)->dict[str,Any]: return {"status":"initializing","valid":False,"selected_charge_slots":[],"shadow_only":True,"active_use_permitted":False,"physical_execution_authority":False,"plan_store_write":False,"scheduler_invoked":False,"safety_chain_invoked":False,"service_calls_performed":False,"blockers":["planner_calculation_pending"]}
         @property
         def native_value(self)->str: return str(self._result().get("status","initializing"))
         @property
         def extra_state_attributes(self)->dict[str,Any]: return dict(self._result())
+
     runtime = get_do_plan_store_runtime(coordinator)
     class DummyOSPlanStoreBridgeSensor(DummyOSPlanReserveSOCSensor):
         _attr_name = "DO Plan Store Bridge"
