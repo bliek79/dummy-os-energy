@@ -1,0 +1,47 @@
+name: Publish Dummy OS Energy 0.2.0-alpha.17
+
+on:
+  push:
+    branches:
+      - publish-alpha17
+    paths:
+      - .github/workflows/publish-alpha17.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TAG: 0.2.0-alpha.17
+      TITLE: Dummy OS Energy 0.2.0-alpha.17 - Planner Thread-Safety Hotfix
+      TARGET_SHA: 6f37961d43a713dfb9fe1965f56865397d4870fd
+      ZIP_NAME: Dummy_OS_Energy_0.2.0-alpha.17_HA_install.zip
+      CHECKSUM_NAME: SHA256SUMS-0.2.0-alpha.17.txt
+      NOTES_FILE: RELEASE_NOTES_0.2.0-alpha.17.md
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - name: Verify exact release metadata
+        run: |
+          grep -F 'VERSION = "0.2.0-alpha.17"' custom_components/dummy_os_data/const.py
+          grep -F '"version": "0.2.0-alpha.17"' custom_components/dummy_os_data/manifest.json
+          grep -F '**Tag:** `0.2.0-alpha.17`' "$NOTES_FILE"
+          grep -F 'FORECAST_HORIZON_HOURS = 72' custom_components/dummy_os_data/const.py
+          grep -F 'QUARTER_MINUTES = 15' custom_components/dummy_os_data/const.py
+      - name: Build Home Assistant installation package
+        run: |
+          zip -r "$ZIP_NAME" custom_components/dummy_os_data -x '*/__pycache__/*' '*.pyc'
+          sha256sum "$ZIP_NAME" > "$CHECKSUM_NAME"
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG" "$ZIP_NAME" "$CHECKSUM_NAME" \
+            --target "$TARGET_SHA" \
+            --title "$TITLE" \
+            --notes-file "$NOTES_FILE" \
+            --prerelease
