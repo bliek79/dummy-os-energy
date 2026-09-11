@@ -67,3 +67,4 @@ jobs:
           git add custom_components/dummy_os_data/do_plan_soc_contract_sensor.py custom_components/dummy_os_data/do_plan_safety_sensor.py custom_components/dummy_os_data/sensor.py tests/test_do_plan_soc_runtime_wiring.py
           git commit -m "Fix SOC contract runtime wiring"
           git push origin HEAD:alpha22-soc-contract-runtime-wiring
+      # trigger alpha.22 gate after regression assertion alignment
