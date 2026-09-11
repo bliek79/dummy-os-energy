@@ -32,6 +32,8 @@ jobs:
       - name: Publish prerelease
         env: {GH_TOKEN: '${{ github.token }}'}
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$VERSION" -m "Dummy OS Energy $VERSION - Central SOC Contract v1"
           git push origin "$VERSION"
           gh release create "$VERSION" dist/Dummy_OS_Energy_0.2.0-alpha.21_HA_install.zip dist/SHA256SUMS-0.2.0-alpha.21.txt --title "Dummy OS Energy 0.2.0-alpha.21 - Central SOC Contract v1" --notes-file RELEASE_NOTES_0.2.0-alpha.21.md --prerelease --verify-tag
