@@ -16,7 +16,7 @@ from .do_plan_scheduler_sensor import DummyOSPlanSchedulerRuntime, get_do_plan_s
 from .do_plan_soc_contract_sensor import RAW_SOC_ENTITY, get_do_plan_soc_contract_runtime
 
 SOC_ENTITY = "sensor.do_plan_soc_contract"
-RESERVE_ENTITY = "sensor.do_plan_reserve_soc"
+RESERVE_ENTITY = "sensor.dummy_os_energy_do_plan_reserve_soc"
 
 
 class DummyOSPlanSafetyRuntime:
