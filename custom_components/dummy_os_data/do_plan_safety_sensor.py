@@ -14,7 +14,7 @@ from .const import DOMAIN, NAME, VERSION
 from .do_plan_safety import build_do_plan_prestart, build_do_plan_safety
 from .do_plan_scheduler_sensor import DummyOSPlanSchedulerRuntime, get_do_plan_scheduler_runtime
 
-SOC_ENTITY = "sensor.anker_solix_solarbank_max_ac_185_soc"
+SOC_ENTITY = "sensor.do_plan_soc_contract"
 RESERVE_ENTITY = "sensor.do_plan_reserve_soc"
 
 
@@ -31,10 +31,10 @@ class DummyOSPlanSafetyRuntime:
 
     def _soc_percent(self) -> float | None:
         state = self.coordinator.hass.states.get(SOC_ENTITY)
-        if state is None or state.state in {"unknown", "unavailable", "none", "None", ""}:
+        if state is None or state.state != "ready" or state.attributes.get("valid") is not True:
             return None
         try:
-            value = float(state.state)
+            value = float(state.attributes.get("soc_percent"))
         except (TypeError, ValueError):
             return None
         return value if 0.0 <= value <= 100.0 else None
