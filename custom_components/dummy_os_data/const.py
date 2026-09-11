@@ -6,20 +6,33 @@ DOMAIN = "dummy_os_data"
 NAME = "Dummy OS Energy"
 VERSION = "0.2.0-alpha.23"
 
+# Legacy Energy Forecast source key retained for config-entry compatibility only.
+# Energy Forecast production always consumes the canonical Source Home Power entity.
 CONF_HOME_POWER_ENTITY = "home_power_entity"
 DEFAULT_HOME_POWER_ENTITY = "sensor.home_power"
 CANONICAL_HOME_POWER_ENTITY = "sensor.do_source_home_power"
 CONF_HOME_POWER_POSITIVE_DIRECTION = "home_power_positive_direction"
 HOME_POWER_POSITIVE_CONSUMPTION = "consumption"
 HOME_POWER_POSITIVE_EXPORT = "export"
-HOME_POWER_POSITIVE_DIRECTION_OPTIONS = [HOME_POWER_POSITIVE_CONSUMPTION, HOME_POWER_POSITIVE_EXPORT]
+HOME_POWER_POSITIVE_DIRECTION_OPTIONS = [
+    HOME_POWER_POSITIVE_CONSUMPTION,
+    HOME_POWER_POSITIVE_EXPORT,
+]
 
+# Canonical Dummy OS Energy source-layer energy inputs.
+# Grid power is one bidirectional source: positive = import, negative = export.
 CONF_GRID_NET_POWER_ENTITY = "grid_net_power_entity"
 CONF_DATA_SOLAR_POWER_ENTITY = "data_solar_power_entity"
 CONF_BATTERY_CHARGE_POWER_ENTITY = "battery_charge_power_entity"
 CONF_BATTERY_DISCHARGE_POWER_ENTITY = "battery_discharge_power_entity"
-DATA_POWER_SOURCE_KEYS = [CONF_GRID_NET_POWER_ENTITY, CONF_DATA_SOLAR_POWER_ENTITY, CONF_BATTERY_CHARGE_POWER_ENTITY, CONF_BATTERY_DISCHARGE_POWER_ENTITY]
+DATA_POWER_SOURCE_KEYS = [
+    CONF_GRID_NET_POWER_ENTITY,
+    CONF_DATA_SOLAR_POWER_ENTITY,
+    CONF_BATTERY_CHARGE_POWER_ENTITY,
+    CONF_BATTERY_DISCHARGE_POWER_ENTITY,
+]
 
+# Temporary alpha.11.5 option keys retained only to prefill migration safely.
 LEGACY_CONF_GRID_IMPORT_POWER_ENTITY = "grid_import_power_entity"
 LEGACY_CONF_GRID_EXPORT_POWER_ENTITY = "grid_export_power_entity"
 
