@@ -1,5 +1,9 @@
 # Dummy OS Energy 0.2.0-alpha.22 - SOC Contract Runtime Wiring
 
+**Tag:** `0.2.0-alpha.22`
+
+## Dummy OS Energy 0.2.0-alpha.22
+
 This prerelease fixes the live alpha.21 SOC wiring issue.
 
 ## Changed
