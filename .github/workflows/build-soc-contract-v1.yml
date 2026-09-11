@@ -1,0 +1,59 @@
+name: Build SOC Contract v1
+
+on:
+  push:
+    branches: [soc-contract-v1]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env: {PYTHONDONTWRITEBYTECODE: '1'}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: soc-contract-v1, fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install --upgrade pytest
+      - name: Build central SOC contract if not committed yet
+        run: |
+          if [ ! -f custom_components/dummy_os_data/do_plan_soc_contract.py ]; then
+            git show 31b416f8700e156646014b7876270c22c7864f7f:.github/workflows/build-soc-contract-v1.yml > /tmp/original.yml
+            python - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          text=Path('/tmp/original.yml').read_text()
+          match=re.search(r"      - name: Build central SOC contract\n        run: \|\n(.*?)      - run: python -m pip install", text, re.S)
+          if not match: raise SystemExit('original build block not found')
+          block=match.group(1)
+          lines=[]
+          for line in block.splitlines():
+              lines.append(line[10:] if line.startswith('          ') else line)
+          script='\n'.join(lines)+'\n'
+          subprocess.run(['bash','-e','-c',script],check=True)
+          PY
+          fi
+      - name: Align migrated Energy Need contract test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tests/test_do_plan_energy_need_sensor_contract.py')
+          s=p.read_text()
+          s=s.replace("    assert 'sensor.anker_solix_solarbank_max_ac_185_soc' in SENSOR\n", "    assert 'SOC_ENTITY = \"sensor.do_plan_soc_contract\"' in SENSOR\n    adapter = (ROOT / \"custom_components/dummy_os_data/do_plan_soc_contract_sensor.py\").read_text()\n    assert 'RAW_SOC_ENTITY=\"sensor.anker_solix_solarbank_max_ac_185_soc\"' in adapter\n")
+          p.write_text(s)
+          PY
+      - run: python -m compileall -q custom_components/dummy_os_data tests
+      - run: python -m pytest -q tests/test_do_plan_soc_contract.py tests/test_do_plan_soc_contract_wiring.py tests/test_do_plan_energy_need_sensor_contract.py
+      - run: python -m pytest -q
+      - run: python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
+      - name: Commit green implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add custom_components/dummy_os_data/do_plan_soc_contract.py custom_components/dummy_os_data/do_plan_soc_contract_sensor.py custom_components/dummy_os_data/sensor.py custom_components/dummy_os_data/do_plan_safety_sensor.py tests/test_do_plan_soc_contract.py tests/test_do_plan_soc_contract_wiring.py tests/test_do_plan_energy_need_sensor_contract.py
+          if ! git diff --cached --quiet; then
+            git commit -m 'Add central SOC Contract v1'
+            git push origin HEAD:soc-contract-v1
+          fi

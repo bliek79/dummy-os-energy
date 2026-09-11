@@ -42,6 +42,7 @@ from .forecast_planner_contract import build_forecast_planner_contract
 from .do_plan_input import build_do_plan_input_72h
 from .do_plan_energy_need import build_do_plan_energy_need
 from .do_plan_reserve_soc import build_do_plan_reserve_soc
+from .do_plan_soc_contract_sensor import build_do_plan_soc_contract_sensors
 from .do_plan_preview_sensor import build_do_plan_preview_sensors
 from .do_plan_72h_sensor import build_do_plan_72h_sensors
 from .do_plan_grid_support_sensor import build_do_plan_grid_support_sensors
@@ -81,6 +82,7 @@ async def async_setup_entry(
             DummyOSEnergyForecastPlannerHoursSensor(coordinator),
             DummyOSEnergyForecastPlannerContractSensor(coordinator),
             DummyOSPlanInput72hSensor(coordinator),
+            *build_do_plan_soc_contract_sensors(coordinator),
             DummyOSPlanEnergyNeedSensor(coordinator),
             DummyOSPlanReserveSOCSensor(coordinator),
             *build_do_plan_preview_sensors(coordinator),
@@ -446,8 +448,8 @@ def _build_energy_need_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]
         safety_reserve_percent=7.0,
         now=snapshot["now"],
     )
-    result["soc_source_entity"] = "sensor.anker_solix_solarbank_max_ac_185_soc"
-    result["source_layer_status"] = "temporary_direct_soc_source_until_planner_source_contract"
+    result["soc_source_entity"] = snapshot.get("soc_source_entity", "sensor.do_plan_soc_contract")
+    result["source_layer_status"] = "central_soc_contract_v1"
     return result
 
 
@@ -629,7 +631,7 @@ class DummyOSPlanEnergyNeedSensor(DummyOSPlanInput72hSensor):
     _attr_suggested_object_id = "do_plan_energy_need"
     _attr_icon = "mdi:battery-clock-outline"
 
-    SOC_ENTITY = "sensor.anker_solix_solarbank_max_ac_185_soc"
+    SOC_ENTITY = "sensor.do_plan_soc_contract"
     BATTERY_CAPACITY_KWH = 7.2
     MIN_SOC_PERCENT = 5.0
     SAFETY_RESERVE_PERCENT = 7.0
@@ -657,19 +659,18 @@ class DummyOSPlanEnergyNeedSensor(DummyOSPlanInput72hSensor):
 
     def _soc_percent(self) -> float | None:
         state = self.coordinator.hass.states.get(self.SOC_ENTITY)
-        if state is None or state.state in {"unknown", "unavailable", "none", "None", ""}:
+        if state is None or state.state != "ready" or state.attributes.get("valid") is not True:
             return None
         try:
-            value = float(state.state)
+            value = float(state.attributes.get("soc_percent"))
         except (TypeError, ValueError):
             return None
         return value if 0.0 <= value <= 100.0 else None
 
     def _snapshot(self) -> dict[str, Any]:
-        return _planner_runtime_snapshot(
-            self.coordinator,
-            soc_percent=self._soc_percent(),
-        )
+        snapshot = _planner_runtime_snapshot(self.coordinator, soc_percent=self._soc_percent())
+        snapshot["soc_source_entity"] = self.SOC_ENTITY
+        return snapshot
 
     def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         return _build_energy_need_from_snapshot(snapshot)
