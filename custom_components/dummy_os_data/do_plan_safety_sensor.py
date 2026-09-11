@@ -13,6 +13,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .const import DOMAIN, NAME, VERSION
 from .do_plan_safety import build_do_plan_prestart, build_do_plan_safety
 from .do_plan_scheduler_sensor import DummyOSPlanSchedulerRuntime, get_do_plan_scheduler_runtime
+from .do_plan_soc_contract_sensor import RAW_SOC_ENTITY, get_do_plan_soc_contract_runtime
 
 SOC_ENTITY = "sensor.do_plan_soc_contract"
 RESERVE_ENTITY = "sensor.do_plan_reserve_soc"
@@ -29,12 +30,15 @@ class DummyOSPlanSafetyRuntime:
         self._cached_prestart: dict[str, Any] | None = None
         self._cache_key: tuple[Any, ...] | None = None
 
+    def _soc_contract(self) -> dict[str, Any]:
+        return get_do_plan_soc_contract_runtime(self.coordinator).result()
+
     def _soc_percent(self) -> float | None:
-        state = self.coordinator.hass.states.get(SOC_ENTITY)
-        if state is None or state.state != "ready" or state.attributes.get("valid") is not True:
+        contract = self._soc_contract()
+        if contract.get("status") != "ready" or contract.get("valid") is not True:
             return None
         try:
-            value = float(state.attributes.get("soc_percent"))
+            value = float(contract.get("soc_percent"))
         except (TypeError, ValueError):
             return None
         return value if 0.0 <= value <= 100.0 else None
@@ -71,7 +75,12 @@ class DummyOSPlanSafetyRuntime:
             safety["reserve_status"] = reserve.get("status")
             safety["reserve_valid"] = reserve.get("valid")
             safety["reserve_source_entity"] = RESERVE_ENTITY
-            safety["soc_source_entity"] = SOC_ENTITY
+            contract = self._soc_contract()
+            safety["soc_source_entity"] = "runtime:do_plan_soc_contract_v1"
+            safety["soc_contract_entity"] = SOC_ENTITY
+            safety["soc_contract_status"] = contract.get("status")
+            safety["soc_contract_valid"] = contract.get("valid")
+            safety["soc_raw_source_entity"] = contract.get("source_entity")
             self._cached_safety = safety
             self._cached_prestart = prestart
             self._cache_key = key
@@ -110,7 +119,7 @@ class _SafetyEntityMixin:
         await self.runtime.store_runtime.async_ensure_loaded()
         self._remove_store_listener = self.runtime.store_runtime.add_listener(self._handle_update)
         self._remove_coordinator_listener = self.coordinator.async_add_listener(self._handle_update)
-        self._remove_source_listener = async_track_state_change_event(self.coordinator.hass, [SOC_ENTITY, RESERVE_ENTITY], self._handle_source_update)
+        self._remove_source_listener = async_track_state_change_event(self.coordinator.hass, [RAW_SOC_ENTITY, RESERVE_ENTITY], self._handle_source_update)
         self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:

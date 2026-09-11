@@ -42,7 +42,7 @@ from .forecast_planner_contract import build_forecast_planner_contract
 from .do_plan_input import build_do_plan_input_72h
 from .do_plan_energy_need import build_do_plan_energy_need
 from .do_plan_reserve_soc import build_do_plan_reserve_soc
-from .do_plan_soc_contract_sensor import build_do_plan_soc_contract_sensors
+from .do_plan_soc_contract_sensor import RAW_SOC_ENTITY, build_do_plan_soc_contract_sensors, get_do_plan_soc_contract_runtime
 from .do_plan_preview_sensor import build_do_plan_preview_sensors
 from .do_plan_72h_sensor import build_do_plan_72h_sensors
 from .do_plan_grid_support_sensor import build_do_plan_grid_support_sensors
@@ -644,7 +644,7 @@ class DummyOSPlanEnergyNeedSensor(DummyOSPlanInput72hSensor):
         await super().async_added_to_hass()
         self._remove_soc_listener = async_track_state_change_event(
             self.coordinator.hass,
-            [self.SOC_ENTITY],
+            [RAW_SOC_ENTITY],
             self._handle_soc_update,
         )
 
@@ -657,19 +657,27 @@ class DummyOSPlanEnergyNeedSensor(DummyOSPlanInput72hSensor):
     def _handle_soc_update(self, _event) -> None:
         self._schedule_refresh()
 
+    def _soc_contract(self) -> dict[str, Any]:
+        return get_do_plan_soc_contract_runtime(self.coordinator).result()
+
     def _soc_percent(self) -> float | None:
-        state = self.coordinator.hass.states.get(self.SOC_ENTITY)
-        if state is None or state.state != "ready" or state.attributes.get("valid") is not True:
+        contract = self._soc_contract()
+        if contract.get("status") != "ready" or contract.get("valid") is not True:
             return None
         try:
-            value = float(state.attributes.get("soc_percent"))
+            value = float(contract.get("soc_percent"))
         except (TypeError, ValueError):
             return None
         return value if 0.0 <= value <= 100.0 else None
 
     def _snapshot(self) -> dict[str, Any]:
+        contract = self._soc_contract()
         snapshot = _planner_runtime_snapshot(self.coordinator, soc_percent=self._soc_percent())
-        snapshot["soc_source_entity"] = self.SOC_ENTITY
+        snapshot["soc_source_entity"] = "runtime:do_plan_soc_contract_v1"
+        snapshot["soc_contract_entity"] = self.SOC_ENTITY
+        snapshot["soc_contract_status"] = contract.get("status")
+        snapshot["soc_contract_valid"] = contract.get("valid")
+        snapshot["soc_raw_source_entity"] = contract.get("source_entity")
         return snapshot
 
     def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
