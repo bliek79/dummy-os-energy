@@ -1,5 +1,7 @@
 # Dummy OS Energy 0.2.0-alpha.26 - Manual Plan Controls Recovery
 
+**Tag:** `0.2.0-alpha.26`
+
 Alpha.26 is a corrective release that restores complete native Home Assistant manual planning controls while preserving the new Dummy OS Energy planner architecture.
 
 ## Restored manual controls
