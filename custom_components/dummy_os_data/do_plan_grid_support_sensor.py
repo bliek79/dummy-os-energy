@@ -55,11 +55,15 @@ def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
         def _snapshot(self)->dict[str,Any]:
             input_entity,input_result=_state_contract(self.hass,"do_plan_input_72h")
             need_entity,need=_state_contract(self.hass,"do_plan_energy_need")
-            return {"now":dt_util.utcnow(),"input_entity":input_entity,"energy_need_entity":need_entity,"input_result":input_result,"energy_need_result":need}
+            reserve_entity,reserve=_state_contract(self.hass,"do_plan_reserve_soc")
+            return {"now":dt_util.utcnow(),"input_entity":input_entity,"energy_need_entity":need_entity,"reserve_entity":reserve_entity,"input_result":input_result,"energy_need_result":need,"reserve_result":reserve}
         def _calculate_result(self,snapshot:dict[str,Any])->dict[str,Any]:
-            input_result=snapshot["input_result"]; need=snapshot["energy_need_result"]
-            result=build_do_plan_grid_support(input_result=input_result,energy_need_result=need,trigger_kwh=self.GRID_CHARGE_TRIGGER_KWH)
-            result["input_entity"]=snapshot["input_entity"]; result["energy_need_entity"]=snapshot["energy_need_entity"]; result["soc_source_entity"]=need.get("soc_source_entity"); result["source_layer_status"]=need.get("source_layer_status"); result["dependency_mode"]="published_upstream_contracts"; return result
+            input_result=snapshot["input_result"]; need=snapshot["energy_need_result"]; reserve=snapshot["reserve_result"]
+            result=build_do_plan_grid_support(input_result=input_result,energy_need_result=need,reserve_result=reserve,trigger_kwh=self.GRID_CHARGE_TRIGGER_KWH)
+            result["input_entity"]=snapshot["input_entity"]; result["energy_need_entity"]=snapshot["energy_need_entity"]; result["reserve_entity"]=snapshot["reserve_entity"]
+            result["soc_source_entity"]=reserve.get("soc_source_entity") or need.get("soc_source_entity")
+            result["source_layer_status"]=reserve.get("source_layer_status") or need.get("source_layer_status")
+            result["dependency_mode"]="published_upstream_contracts_with_reserve_handoff"; return result
         def _initial_result(self)->dict[str,Any]: return {"status":"initializing","valid":False,"selected_charge_slots":[],"shadow_only":True,"active_use_permitted":False,"physical_execution_authority":False,"plan_store_write":False,"scheduler_invoked":False,"safety_chain_invoked":False,"service_calls_performed":False,"blockers":["planner_calculation_pending"]}
         @property
         def native_value(self)->str: return str(self._result().get("status","initializing"))
@@ -75,7 +79,7 @@ def build_do_plan_grid_support_sensors(coordinator: Any) -> list[Any]:
         _unrecorded_attributes=frozenset({"candidates","suppressed_candidates"})
         def __init__(self,coordinator:Any)->None: super().__init__(coordinator); self._last_material_key: str|None=None; self._skipped_refreshes=0
         def _calculate_result(self,snapshot:dict[str,Any])->dict[str,Any]:
-            input_result=_build_plan_input_from_snapshot(snapshot); reserve_result=_build_reserve_from_snapshot(snapshot); need=_build_energy_need_from_snapshot(snapshot); preview_result=build_do_plan_preview(input_result=input_result,reserve_result=reserve_result,now=snapshot["now"],charge_efficiency_percent=92.0,discharge_efficiency_percent=92.0,minimum_trade_margin=0.10,max_charge_power_w=3200,max_discharge_power_w=3200); plan72_result=build_do_plan_72h(input_result=input_result,reserve_result=reserve_result,preview_result=preview_result); grid_support_result=build_do_plan_grid_support(input_result=input_result,energy_need_result=need,trigger_kwh=0.25); result=build_do_plan_store_bridge(plan72_result=plan72_result,grid_support_result=grid_support_result,now=snapshot["now"]); result["plan72_entity"]="sensor.do_plan_72h"; result["grid_support_entity"]="sensor.do_plan_grid_support"; return result
+            input_result=_build_plan_input_from_snapshot(snapshot); reserve_result=_build_reserve_from_snapshot(snapshot); need=_build_energy_need_from_snapshot(snapshot); preview_result=build_do_plan_preview(input_result=input_result,reserve_result=reserve_result,now=snapshot["now"],charge_efficiency_percent=92.0,discharge_efficiency_percent=92.0,minimum_trade_margin=0.10,max_charge_power_w=3200,max_discharge_power_w=3200); grid_support_result=build_do_plan_grid_support(input_result=input_result,energy_need_result=need,reserve_result=reserve_result,trigger_kwh=0.25); plan72_result=build_do_plan_72h(input_result=input_result,reserve_result=reserve_result,preview_result=preview_result,grid_support_result=grid_support_result); result=build_do_plan_store_bridge(plan72_result=plan72_result,grid_support_result=grid_support_result,now=snapshot["now"]); result["plan72_entity"]="sensor.do_plan_72h"; result["grid_support_entity"]="sensor.do_plan_grid_support"; return result
         async def _async_refresh_result(self)->None:
             while True:
                 self._refresh_pending=False; snapshot=self._snapshot(); material_key=build_plan_store_bridge_refresh_key(snapshot)

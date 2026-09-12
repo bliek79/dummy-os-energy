@@ -1,10 +1,10 @@
-name: Validate alpha.26 manual plan controls
+name: Validate Alpha 28 release contract
 
 on:
   pull_request:
     branches: [main]
   push:
-    branches: [alpha26-manual-plan-controls]
+    branches: [alpha28-grid-support-contract-alignment]
 
 permissions:
   contents: read
@@ -26,10 +26,43 @@ jobs:
         run: python -m pytest -q
       - name: Validate manifest
         run: python -m json.tool custom_components/dummy_os_data/manifest.json >/dev/null
-      - name: Verify alpha.26 release and architecture contract
+      - name: Verify release version consistency
         run: |
-          grep -F 'VERSION = "0.2.0-alpha.26"' custom_components/dummy_os_data/const.py
-          grep -F '"version": "0.2.0-alpha.26"' custom_components/dummy_os_data/manifest.json
+          python - <<'PY'
+          import ast
+          import json
+          import re
+          from pathlib import Path
+
+          const_path = Path('custom_components/dummy_os_data/const.py')
+          manifest_path = Path('custom_components/dummy_os_data/manifest.json')
+
+          tree = ast.parse(const_path.read_text(encoding='utf-8'))
+          version = None
+          for node in tree.body:
+              if isinstance(node, ast.Assign):
+                  for target in node.targets:
+                      if isinstance(target, ast.Name) and target.id == 'VERSION':
+                          version = ast.literal_eval(node.value)
+                          break
+              if version is not None:
+                  break
+
+          manifest_version = json.loads(manifest_path.read_text(encoding='utf-8'))['version']
+          assert isinstance(version, str) and version, 'VERSION missing from const.py'
+          assert version == manifest_version, f'version mismatch: const={version!r}, manifest={manifest_version!r}'
+          assert re.fullmatch(r'\d+\.\d+\.\d+-alpha\.\d+', version), f'not an alpha release version: {version!r}'
+          print(f'Validated release version: {version}')
+          PY
+      - name: Verify core architecture contract
+        run: |
           grep -F 'QUARTER_MINUTES = 15' custom_components/dummy_os_data/const.py
           grep -F 'FORECAST_HORIZON_HOURS = 72' custom_components/dummy_os_data/const.py
           grep -F 'PLATFORMS = ["sensor", "select", "binary_sensor", "switch", "datetime", "number"]' custom_components/dummy_os_data/const.py
+      - name: Verify Alpha 28 grid-support contract
+        run: |
+          test -f tests/test_alpha28_grid_support_contract.py
+          grep -F 'reserve_soc_grid_support_handoff' custom_components/dummy_os_data/do_plan_grid_support.py
+          grep -F 'dynamic_pre_solar_charge_window' custom_components/dummy_os_data/do_plan_grid_support.py
+          grep -F 'published_upstream_contracts_with_reserve_handoff' custom_components/dummy_os_data/do_plan_grid_support_sensor.py
+          grep -F 'simulation_reserve_floor_soc_percent' custom_components/dummy_os_data/do_plan_72h.py

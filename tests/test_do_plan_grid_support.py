@@ -26,12 +26,13 @@ def test_below_and_equal_trigger_do_not_charge():
         r=MOD.build_do_plan_grid_support(input_result=make_input(),energy_need_result=need(value))
         assert r['grid_charge_triggered'] is False and r['selected_charge_slots']==[] and r['trigger_reason']=='below_trigger'
 
-def test_example_88_percent_capacity_split():
+def test_example_88_percent_uses_dynamic_window_not_static_headroom_split():
     r=MOD.build_do_plan_grid_support(input_result=make_input(),energy_need_result=need(0.96,88.0))
     assert r['grid_charge_triggered'] is True
-    assert r['chargeable_deficit_battery_kwh']==0.864
-    assert r['unavoidable_shortfall_battery_kwh']==0.096
-    assert r['required_grid_charge_input_kwh']==0.939
+    assert r['chargeable_deficit_battery_kwh']==0.96
+    assert r['unavoidable_shortfall_battery_kwh']==0.0
+    assert r['required_grid_charge_input_kwh']==1.043
+    assert r['feasibility_basis']=='dynamic_pre_solar_charge_window'
     assert r['target_soc_after_safety_charge_percent']==100.0
     assert r['physical_execution_authority'] is False and r['service_calls_performed'] is False
 

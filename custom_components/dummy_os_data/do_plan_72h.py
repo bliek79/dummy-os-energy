@@ -81,6 +81,8 @@ def _simulate(*, rows: list[dict[str, Any]], start_soc: float, reserve_soc: floa
             charge_input_left -= grid_to_battery_input
 
         action = "baseline"
+        if safety_battery > EPS and grid_to_battery_input > EPS:
+            action = "safety_charge"
         if trade and trade.get("charge_time") == row["start"] and charge_input_left > 0:
             trade_input = min(charge_input_left, max(0.0, (CAPACITY_KWH - stored) / charge_eff))
             grid_to_battery_input += trade_input
@@ -121,7 +123,7 @@ def _simulate(*, rows: list[dict[str, Any]], start_soc: float, reserve_soc: floa
     return {"hours": out, "end_soc_percent": round(stored / CAPACITY_KWH * 100.0, 3), "reserve_breach_hours": reserve_breaches, "execution_buffer_breach_hours": buffer_breaches, **{k: round(v, 3) for k,v in totals.items()}}
 
 
-def build_do_plan_72h(*, input_result: dict[str, Any], reserve_result: dict[str, Any], preview_result: dict[str, Any]) -> dict[str, Any]:
+def build_do_plan_72h(*, input_result: dict[str, Any], reserve_result: dict[str, Any], preview_result: dict[str, Any], grid_support_result: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build exact 72-hour observer-only sequential planner simulation."""
     base = {
         "shadow_only": True, "active_use_permitted": False, "physical_execution_authority": False,
@@ -131,11 +133,13 @@ def build_do_plan_72h(*, input_result: dict[str, Any], reserve_result: dict[str,
         "calculation_scope": "sequential_72h_observer_simulation",
     }
     blockers: list[str] = []
-    if input_result.get("status") != "ready" or input_result.get("fully_valid_hours") != HOURS: blockers.append("planner_input_not_ready")
+    if input_result.get("status") not in {"ready", "runtime_blocked"} or input_result.get("fully_valid_hours") != HOURS: blockers.append("planner_input_not_structurally_ready")
     if reserve_result.get("status") != "ready" or reserve_result.get("valid") is not True: blockers.append("reserve_soc_not_ready")
     if preview_result.get("status") != "ready" or preview_result.get("valid") is not True: blockers.append("planner_preview_not_ready")
+    if grid_support_result is not None and grid_support_result.get("status") not in {"ready", "infeasible"}: blockers.append("grid_support_not_ready")
     sig = input_result.get("rows_signature")
     if sig is None or reserve_result.get("input_rows_signature") != sig or preview_result.get("input_rows_signature") != sig: blockers.append("input_signature_mismatch")
+    if grid_support_result is not None and grid_support_result.get("input_rows_signature") != sig: blockers.append("grid_support_signature_mismatch")
     raw_rows = input_result.get("rows")
     if not isinstance(raw_rows, list) or len(raw_rows) != HOURS: blockers.append("rows_not_exactly_72")
     soc = _finite(reserve_result.get("soc_percent"), non_negative=True)
@@ -157,11 +161,21 @@ def build_do_plan_72h(*, input_result: dict[str, Any], reserve_result: dict[str,
     if blockers: return _blocked(base, blockers)
     assert soc is not None and reserve_soc is not None
     charge_eff=CHARGE_EFFICIENCY_PERCENT/100.0; discharge_eff=DISCHARGE_EFFICIENCY_PERCENT/100.0
+
     safety_hours: dict[str,float] = {}
-    for item in preview_result.get("safety_charge_hours") or []:
-        if isinstance(item, dict):
-            start=item.get("start"); energy=_finite(item.get("candidate_battery_energy_kwh"), non_negative=True)
-            if isinstance(start,str) and energy is not None: safety_hours[start]=energy
+    safety_source = "preview"
+    if grid_support_result is not None and grid_support_result.get("status") == "ready" and grid_support_result.get("valid") is True:
+        for item in grid_support_result.get("selected_charge_slots") or []:
+            if isinstance(item, dict):
+                start=item.get("start"); stored=_finite(item.get("stored_battery_kwh"), non_negative=True)
+                if isinstance(start,str) and stored is not None: safety_hours[start]=safety_hours.get(start,0.0)+stored
+        safety_source = "grid_support_selected_slots"
+    else:
+        for item in preview_result.get("safety_charge_hours") or []:
+            if isinstance(item, dict):
+                start=item.get("start"); energy=_finite(item.get("candidate_battery_energy_kwh"), non_negative=True)
+                if isinstance(start,str) and energy is not None: safety_hours[start]=energy
+
     trade = None
     candidates=[]
     if preview_result.get("self_use_trade_profitable"):
@@ -174,8 +188,17 @@ def build_do_plan_72h(*, input_result: dict[str, Any], reserve_result: dict[str,
         if m is not None and isinstance(charge_time,str) and isinstance(discharge_time,str): valid_candidates.append((m,charge_time,discharge_time,kind))
     if valid_candidates:
         m,ct,dt,kind=max(valid_candidates,key=lambda x:x[0]); trade={"margin":m,"charge_time":ct,"discharge_time":dt,"kind":kind}
-    baseline=_simulate(rows=rows,start_soc=soc,reserve_soc=reserve_soc,safety_hours=safety_hours,trade=None,charge_eff=charge_eff,discharge_eff=discharge_eff)
-    candidate=_simulate(rows=rows,start_soc=soc,reserve_soc=reserve_soc,safety_hours=safety_hours,trade=trade,charge_eff=charge_eff,discharge_eff=discharge_eff)
+
+    # A 100% reserve target created by the grid-support handoff is a target, not a permanent discharge floor.
+    # During dynamic support the physical safety floor remains min SOC + safety reserve; grid-support slots replenish energy over time.
+    simulation_reserve_soc = reserve_soc
+    if reserve_result.get("grid_support_required") is True:
+        simulation_reserve_soc = MIN_SOC_PERCENT + SAFETY_RESERVE_PERCENT
+
+    baseline=_simulate(rows=rows,start_soc=soc,reserve_soc=simulation_reserve_soc,safety_hours=safety_hours,trade=None,charge_eff=charge_eff,discharge_eff=discharge_eff)
+    candidate=_simulate(rows=rows,start_soc=soc,reserve_soc=simulation_reserve_soc,safety_hours=safety_hours,trade=trade,charge_eff=charge_eff,discharge_eff=discharge_eff)
     solar_displacement=max(0.0, baseline["solar_to_battery_kwh"]-candidate["solar_to_battery_kwh"])
     infeasible = candidate["reserve_breach_hours"] > 0 or candidate["execution_buffer_breach_hours"] > 0
-    return {**base, "status": "infeasible" if infeasible else "ready", "valid": not infeasible, "reason": "reserve_or_execution_buffer_breach" if infeasible else "sequential_simulation_complete", "blockers": ["simulated_reserve_breach"] if infeasible else [], "hour_count": HOURS, "hours": candidate["hours"], "baseline": {k:v for k,v in baseline.items() if k!="hours"}, "candidate": {k:v for k,v in candidate.items() if k!="hours"}, "trade_candidate": trade, "solar_displacement_kwh": round(solar_displacement,3), "losses_included": True, "reserve_recalculated": False, "missing_as_zero_used": False}
+    if grid_support_result is not None and grid_support_result.get("status") == "infeasible":
+        infeasible = True
+    return {**base, "status": "infeasible" if infeasible else "ready", "valid": not infeasible, "reason": "reserve_or_execution_buffer_breach" if infeasible else "sequential_simulation_complete", "blockers": ["simulated_reserve_breach"] if infeasible else [], "hour_count": HOURS, "hours": candidate["hours"], "baseline": {k:v for k,v in baseline.items() if k!="hours"}, "candidate": {k:v for k,v in candidate.items() if k!="hours"}, "trade_candidate": trade, "solar_displacement_kwh": round(solar_displacement,3), "losses_included": True, "reserve_recalculated": False, "reserve_target_soc_percent": round(reserve_soc,3), "simulation_reserve_floor_soc_percent": round(simulation_reserve_soc,3), "safety_charge_source": safety_source, "grid_support_status": grid_support_result.get("status") if grid_support_result is not None else None, "missing_as_zero_used": False}

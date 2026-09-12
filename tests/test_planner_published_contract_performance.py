@@ -11,12 +11,16 @@ def test_preview_consumes_published_upstream_contracts_only():
     assert 'async_get_entity_id("sensor", DOMAIN, unique_id)' in source
 
 
-def test_grid_support_entity_does_not_rebuild_dependencies():
+def test_grid_support_entity_consumes_published_contracts_with_reserve_handoff():
     source = (ROOT / "do_plan_grid_support_sensor.py").read_text(encoding="utf-8")
     grid_class, bridge_class = source.split("class DummyOSPlanStoreBridgeSensor", 1)
     assert "_build_plan_input_from_snapshot(snapshot)" not in grid_class
     assert "_build_energy_need_from_snapshot(snapshot)" not in grid_class
-    assert '"dependency_mode"]="published_upstream_contracts"' in grid_class
+    assert "_build_reserve_from_snapshot(snapshot)" not in grid_class
+    assert '"dependency_mode"]="published_upstream_contracts_with_reserve_handoff"' in grid_class
+    assert '_state_contract(self.hass,"do_plan_input_72h")' in grid_class
+    assert '_state_contract(self.hass,"do_plan_energy_need")' in grid_class
+    assert '_state_contract(self.hass,"do_plan_reserve_soc")' in grid_class
     # The cached Bridge intentionally retains its one material-change rebuild path.
     assert "_build_plan_input_from_snapshot(snapshot)" in bridge_class
     assert "build_plan_store_bridge_refresh_key(snapshot)" in bridge_class
