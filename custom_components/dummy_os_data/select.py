@@ -1,4 +1,4 @@
-"""Select entities for Dummy OS Forecast."""
+"""Select entities for Dummy OS Energy."""
 from __future__ import annotations
 from typing import Any
 from homeassistant.components.select import SelectEntity
@@ -12,10 +12,17 @@ from .do_plan_manual_interface import VALID_SLOT_OPTIONS
 from .do_plan_manual_interface_sensor import get_do_plan_manual_interface_runtime
 from .do_plan_operating_mode import OPERATING_MODE_OPTIONS
 from .do_plan_operating_mode_sensor import get_do_plan_operating_mode_runtime
+from .do_plan_store import SLOT_COUNT, VALID_ACTIONS
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
     coordinator: DummyOSHomeDataCoordinator = entry.runtime_data
-    async_add_entities([DummyOSEnergyProfileSelect(coordinator), DummyOSManualPlanSlotSelect(coordinator), DummyOSPlanOperatingModeSelect(coordinator)])
+    runtime = get_do_plan_manual_interface_runtime(coordinator)
+    async_add_entities([
+        DummyOSEnergyProfileSelect(coordinator),
+        DummyOSManualPlanSlotSelect(coordinator),
+        DummyOSPlanOperatingModeSelect(coordinator),
+        *[DummyOSManualPlanActionSelect(runtime, slot_id) for slot_id in range(1, SLOT_COUNT + 1)],
+    ])
 
 class DummyOSEnergyProfileSelect(SelectEntity):
     """Select the active Energy Forecast historical profile."""
@@ -53,13 +60,13 @@ class DummyOSManualPlanSlotSelect(SelectEntity):
     def current_option(self) -> str: return self.runtime.selected_slot
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"shadow_only": True,"manual_interface_write": False,"shadow_store_write": False,"operational_plan_store_write": False,"plan_store_mutated": False,"service_calls_performed": False,"physical_execution_authority": False}
+        return {"shadow_only": True,"manual_interface_write": True,"shadow_store_write": True,"operational_plan_store_write": False,"plan_store_mutated": False,"service_calls_performed": False,"physical_execution_authority": False}
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(identifiers={(DOMAIN, "main")},name=NAME,manufacturer="Dummy OS",model="Energy Platform",sw_version=VERSION)
     async def async_select_option(self, option: str) -> None: self.runtime.select(option)
     async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass(); self._remove_listener = self.runtime.add_listener(self.async_write_ha_state)
+        await super().async_added_to_hass(); self._remove_listener = self.runtime.add_listener(self.async_write_ha_state); await self.runtime.async_ensure_controls_loaded(); self.async_write_ha_state()
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener is not None: self._remove_listener()
         await super().async_will_remove_from_hass()
@@ -83,3 +90,30 @@ class DummyOSPlanOperatingModeSelect(SelectEntity):
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener is not None: self._remove_listener()
         await super().async_will_remove_from_hass()
+
+class DummyOSManualPlanActionSelect(SelectEntity):
+    """Native action control for one manual plan slot."""
+    _attr_has_entity_name = False
+    _attr_should_poll = False
+    _attr_options = sorted(VALID_ACTIONS)
+    _attr_icon = "mdi:battery-sync-outline"
+    def __init__(self, runtime, slot_id: int) -> None:
+        self.runtime = runtime; self.slot_id = slot_id; self._remove_listener = None
+        self._attr_name = f"DO Plan {slot_id} Action"
+        self._attr_unique_id = f"do_plan_{slot_id}_action"
+        self._attr_suggested_object_id = f"do_plan_{slot_id}_action"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN,"main")},name=NAME,manufacturer="Dummy OS",model="Energy Platform",sw_version=VERSION)
+    @property
+    def current_option(self) -> str | None:
+        value = self.runtime.control_value(self.slot_id, "action")
+        return value if value in self.options else None
+    async def async_select_option(self, option: str) -> None:
+        if option not in self.options: raise ValueError(f"Unsupported action: {option}")
+        await self.runtime.async_set_control(self.slot_id, "action", option)
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass(); self._remove_listener = self.runtime.add_listener(self._handle_update); await self.runtime.async_ensure_controls_loaded(); self.async_write_ha_state()
+    async def async_will_remove_from_hass(self) -> None:
+        if self._remove_listener is not None: self._remove_listener()
+        await super().async_will_remove_from_hass()
+    @callback
+    def _handle_update(self) -> None: self.async_write_ha_state()
