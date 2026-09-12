@@ -48,5 +48,8 @@ def test_full_battery_never_overfills():
 def test_export_trade_uses_explicit_candidate():
     i,r,p=base_inputs(); p.update({"export_trade_profitable":True,"best_export_margin":0.3,"best_export_charge_time":i["rows"][0]["start"],"best_export_discharge_time":i["rows"][1]["start"]}); out=build_do_plan_72h(input_result=i,reserve_result=r,preview_result=p); assert out["trade_candidate"]["kind"]=="export"
 
-def test_upstream_not_ready_blocks():
-    i,r,p=base_inputs(); i["status"]="runtime_blocked"; out=build_do_plan_72h(input_result=i,reserve_result=r,preview_result=p); assert out["status"]=="blocked"
+def test_runtime_blocked_structurally_complete_input_remains_usable():
+    i,r,p=base_inputs(); i["status"]="runtime_blocked"; out=build_do_plan_72h(input_result=i,reserve_result=r,preview_result=p)
+    assert out["status"] != "blocked"
+    assert out["hour_count"] == 72
+    assert len(out["hours"]) == 72
