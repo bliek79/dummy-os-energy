@@ -20,24 +20,12 @@ def mode(name: str) -> dict:
     )
 
 
-def scheduler(origin: str | None, ready: bool = True) -> dict:
+def store(*origins: str) -> dict:
     return {
-        "status": "ready" if ready else "idle",
-        "scheduler_status": "ready" if ready else "idle",
-        "scheduler_ready": ready,
-        "selected_slot_id": 1 if ready else None,
-        "selected_plan_id": "p1" if ready else None,
-        "selected_origin": origin,
-        "selected_action": "charge" if ready else None,
-        "selected_start_time": "2026-09-12T05:00:00+00:00" if ready else None,
-        "selected_window_end": "2026-09-12T05:10:00+00:00" if ready else None,
-        "decision_signature": "sched",
-        "blockers": [],
-        "slot_states": [],
-        "shadow_only": True,
-        "active_use_permitted": False,
-        "physical_execution_authority": False,
-        "service_calls_performed": False,
+        "slots": [
+            {"slot_id": index + 1, "status": "pending", "origin": origin, "plan_id": f"p{index + 1}"}
+            for index, origin in enumerate(origins)
+        ]
     }
 
 
@@ -82,29 +70,28 @@ def test_unready_or_invalid_mode_fails_closed() -> None:
     assert invalid["scheduler_selection_allowed"] is False
 
 
-def test_scheduler_gate_blocks_non_selecting_modes() -> None:
-    base = scheduler("automatic_72h_planner")
-    for name in (module.MODE_SELF_CONSUMPTION, module.MODE_DISABLED):
-        result = module.apply_scheduler_mode_gate(base, mode(name))
-        assert result["scheduler_ready"] is False
-        assert result["selected_plan_id"] is None
-        assert result["scheduler_status"] == "idle"
-        assert result["operating_mode_signature"] == mode(name)["operating_mode_signature"]
+def test_scheduler_preselection_gate_blocks_non_selecting_modes() -> None:
+    for name, expected in (
+        (module.MODE_SELF_CONSUMPTION, "operating_mode_self_consumption"),
+        (module.MODE_DISABLED, "operating_mode_disabled"),
+    ):
+        gated, blockers = module.gate_store_for_scheduler(store("manual", "automatic_72h_planner"), mode(name))
+        assert expected in blockers
+        assert all(slot["status"] == "blocked" for slot in gated["slots"])
 
 
-def test_manual_mode_accepts_manual_and_rejects_automatic() -> None:
-    accepted = module.apply_scheduler_mode_gate(scheduler("manual"), mode(module.MODE_MANUAL))
-    rejected = module.apply_scheduler_mode_gate(scheduler("automatic_72h_planner"), mode(module.MODE_MANUAL))
-    assert accepted["scheduler_ready"] is True
-    assert rejected["scheduler_ready"] is False
-    assert "plan_origin_not_allowed" in rejected["blockers"]
+def test_manual_mode_allows_only_manual_origin() -> None:
+    gated, blockers = module.gate_store_for_scheduler(store("manual", "automatic_72h_planner"), mode(module.MODE_MANUAL))
+    assert blockers == []
+    assert gated["slots"][0]["status"] == "pending"
+    assert gated["slots"][1]["status"] == "blocked"
+    assert gated["slots"][1]["operating_mode_blocker"] == "plan_origin_not_allowed"
 
 
-def test_automatic_mode_accepts_manual_and_automatic_origins() -> None:
-    for origin in ("manual", "automatic_72h_planner"):
-        result = module.apply_scheduler_mode_gate(scheduler(origin), mode(module.MODE_AUTOMATIC))
-        assert result["scheduler_ready"] is True
-        assert result["selected_origin"] == origin
+def test_automatic_mode_allows_manual_and_automatic_origins() -> None:
+    gated, blockers = module.gate_store_for_scheduler(store("manual", "automatic_72h_planner"), mode(module.MODE_AUTOMATIC))
+    assert blockers == []
+    assert [slot["status"] for slot in gated["slots"]] == ["pending", "pending"]
 
 
 def test_safety_revalidates_origin_against_mode() -> None:
@@ -124,15 +111,14 @@ def test_safety_revalidates_origin_against_mode() -> None:
 def test_prestart_detects_mode_signature_change() -> None:
     automatic = mode(module.MODE_AUTOMATIC)
     manual = mode(module.MODE_MANUAL)
-    sched = scheduler("manual")
-    sched["operating_mode_signature"] = automatic["operating_mode_signature"]
+    scheduler = {"operating_mode_signature": automatic["operating_mode_signature"]}
     safety = {
         "safety_status": "ready",
         "safety_ready": True,
         "operating_mode_signature": automatic["operating_mode_signature"],
     }
     prestart = {"status": "ready", "prestart_status": "ready", "prestart_ready": True, "blockers": []}
-    result = module.apply_prestart_mode_gate(prestart, sched, safety, manual)
+    result = module.apply_prestart_mode_gate(prestart, scheduler, safety, manual)
     assert result["prestart_ready"] is False
     assert result["prestart_status"] == "blocked"
     assert "operating_mode_changed" in result["blockers"]
