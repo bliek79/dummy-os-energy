@@ -1,6 +1,7 @@
 """Persistent Operating Mode runtime and Home Assistant status sensor."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -18,6 +19,8 @@ _RUNTIME_ATTR = "_dummy_os_do_plan_operating_mode_runtime"
 
 
 class DummyOSPlanOperatingModeRuntime:
+    """Own the restart-persistent logical planner operating mode."""
+
     def __init__(self, hass: Any, coordinator: Any) -> None:
         self.hass = hass
         self.coordinator = coordinator
@@ -27,29 +30,31 @@ class DummyOSPlanOperatingModeRuntime:
         self.changed_at: str | None = None
         self.mode_source = "initial_default"
         self.runtime_ready = False
-        self._load_started = False
+        self._load_lock = asyncio.Lock()
         self._listeners: list[Callable[[], None]] = []
 
     async def async_ensure_loaded(self) -> None:
         if self.runtime_ready:
             return
-        if self._load_started:
-            return
-        self._load_started = True
-        stored = await self.store.async_load()
-        if isinstance(stored, dict) and stored.get("mode") in OPERATING_MODE_OPTIONS:
-            self.mode = stored["mode"]
-            self.previous_mode = stored.get("previous_mode")
-            self.changed_at = stored.get("changed_at")
-            self.mode_source = "startup_restore"
-        self.runtime_ready = True
+        async with self._load_lock:
+            if self.runtime_ready:
+                return
+            stored = await self.store.async_load()
+            if isinstance(stored, dict) and stored.get("mode") in OPERATING_MODE_OPTIONS:
+                self.mode = stored["mode"]
+                self.previous_mode = stored.get("previous_mode")
+                self.changed_at = stored.get("changed_at")
+                self.mode_source = "startup_restore"
+            self.runtime_ready = True
         self._notify()
 
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(listener)
+
         def remove() -> None:
             if listener in self._listeners:
                 self._listeners.remove(listener)
+
         return remove
 
     @callback
@@ -76,9 +81,18 @@ class DummyOSPlanOperatingModeRuntime:
         self.mode = mode
         self.changed_at = datetime.now(timezone.utc).isoformat()
         self.mode_source = source
-        await self.store.async_save({"mode": self.mode, "previous_mode": self.previous_mode, "changed_at": self.changed_at})
+        await self.store.async_save(
+            {
+                "mode": self.mode,
+                "previous_mode": self.previous_mode,
+                "changed_at": self.changed_at,
+            }
+        )
         self._notify()
-        self.coordinator.async_update_listeners()
+        # Existing downstream observer entities also listen to the coordinator.
+        # Use the coordinator's established notification path; Operating Mode
+        # never changes forecast data or grants execution authority.
+        self.coordinator._notify()
 
 
 def get_do_plan_operating_mode_runtime(coordinator: Any) -> DummyOSPlanOperatingModeRuntime:
@@ -113,7 +127,13 @@ class DummyOSPlanOperatingModeStatusSensor(SensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, "main")}, name=NAME, manufacturer="Dummy OS", model="Energy Platform", sw_version=VERSION)
+        return DeviceInfo(
+            identifiers={(DOMAIN, "main")},
+            name=NAME,
+            manufacturer="Dummy OS",
+            model="Energy Platform",
+            sw_version=VERSION,
+        )
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
