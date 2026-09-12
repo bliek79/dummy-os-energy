@@ -30,8 +30,14 @@ def build_operating_mode_status(*, mode: Any, previous_mode: Any, changed_at: An
     scheduler_allowed = valid and runtime_ready and effective in {MODE_MANUAL, MODE_AUTOMATIC}
     manual_allowed = scheduler_allowed and effective in {MODE_MANUAL, MODE_AUTOMATIC}
     automatic_allowed = scheduler_allowed and effective == MODE_AUTOMATIC
+    if not runtime_ready:
+        status = "initializing"
+    elif not valid:
+        status = "blocked"
+    else:
+        status = "ready"
     return {
-        "status": "ready" if not blockers else "blocked",
+        "status": status,
         "configured_mode": mode,
         "effective_mode": effective,
         "mode_valid": valid,
