@@ -1,5 +1,7 @@
 ## Dummy OS Energy 0.2.0-alpha.28
 
+**Tag:** `0.2.0-alpha.28`
+
 ### Grid Support Contract Alignment
 
 Alpha 28 aligns the Reserve SOC -> Grid Support -> Preview -> Plan72 chain after live validation of Alpha 27 exposed downstream contract mismatches.
