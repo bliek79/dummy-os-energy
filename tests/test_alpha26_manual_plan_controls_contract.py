@@ -9,11 +9,8 @@ def text(name: str) -> str:
     return (COMP / name).read_text(encoding="utf-8")
 
 
-def test_alpha26_version_and_platform_contract() -> None:
+def test_alpha26_platform_contract_remains_present() -> None:
     const = text("const.py")
-    manifest = text("manifest.json")
-    assert 'VERSION = "0.2.0-alpha.26"' in const
-    assert '"version": "0.2.0-alpha.26"' in manifest
     assert '"number"' in const
     assert "FORECAST_HORIZON_HOURS = 72" in const
     assert "FORECAST_SLOTS = FORECAST_HORIZON_HOURS * 60 // QUARTER_MINUTES" in const

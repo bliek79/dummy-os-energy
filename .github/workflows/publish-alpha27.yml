@@ -52,3 +52,5 @@ jobs:
             --notes-file RELEASE_NOTES_0.2.0-alpha.27.md \
             --prerelease \
             --verify-tag
+
+# Release gate refresh after version-contract alignment.
