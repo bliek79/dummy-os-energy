@@ -53,4 +53,4 @@ jobs:
             --prerelease \
             --verify-tag
 
-# Release gate refresh after version-contract alignment.
+# Release gate refresh after release-notes heading alignment.
