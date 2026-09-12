@@ -42,7 +42,7 @@ def _base(input_result:dict[str,Any],trigger:float)->dict[str,Any]:
         'input_rows_signature':input_result.get('rows_signature'),
         'native_resolution_minutes':15,'native_slot_count':288,'planner_hour_count':72,
         'battery_capacity_kwh':BATTERY_CAPACITY_KWH,'grid_charge_trigger_kwh':round(trigger,3),
-        'trigger_rule':'additional_grid_charge_kwh > grid_charge_trigger_kwh',
+        'trigger_rule':'grid_support_deficit_kwh > grid_charge_trigger_kwh',
         'charge_efficiency_percent':CHARGE_EFFICIENCY_PERCENT,'discharge_efficiency_percent':DISCHARGE_EFFICIENCY_PERCENT,
         'max_charge_power_w':MAX_CHARGE_POWER_W,'max_discharge_power_w':MAX_DISCHARGE_POWER_W,
         'shadow_only':True,'active_use_permitted':False,'physical_execution_authority':False,
@@ -106,57 +106,80 @@ def _simulate(slots:list[dict[str,Any]], *, start_soc:float, charge_plan:dict[st
     return {'end_soc_percent':round(stored/BATTERY_CAPACITY_KWH*100,3),'first_grid_support_need':first_floor_need,'import_cost_eur':round(import_cost,6),'export_revenue_eur':round(export_revenue,6),'net_grid_cost_eur':round(net_cost,6),'solar_to_battery_stored_kwh':round(solar_to_batt_total,6),'grid_to_battery_input_kwh':round(grid_to_batt_total,6),'grid_to_home_kwh':round(grid_to_home_total,6),'timeline':timeline}
 
 
-def build_do_plan_grid_support(*,input_result:dict[str,Any],energy_need_result:dict[str,Any],trigger_kwh:float=DEFAULT_GRID_CHARGE_TRIGGER_KWH)->dict[str,Any]:
+def _handoff(reserve_result:dict[str,Any]|None, energy_need_result:dict[str,Any]|None, input_result:dict[str,Any])->tuple[float|None,float|None,datetime|None,str,list[str]]:
+    blockers=[]
+    if isinstance(reserve_result,dict) and reserve_result.get('status')=='ready' and reserve_result.get('valid') is True and reserve_result.get('grid_support_required') is True:
+        if reserve_result.get('input_rows_signature')!=input_result.get('rows_signature'): blockers.append('reserve_input_signature_mismatch')
+        return (_finite(reserve_result.get('grid_support_deficit_kwh'),non_negative=True),_finite(reserve_result.get('soc_percent'),non_negative=True),_utc(reserve_result.get('first_usable_solar')),'reserve_soc_grid_support_handoff',blockers)
+    need=energy_need_result or {}
+    if need.get('status')!='ready' or need.get('valid') is not True: blockers.append('energy_need_not_ready')
+    if need.get('input_rows_signature')!=input_result.get('rows_signature'): blockers.append('input_signature_mismatch')
+    return (_finite(need.get('additional_grid_charge_kwh'),non_negative=True),_finite(need.get('soc_percent'),non_negative=True),_utc(need.get('first_usable_solar')),'energy_need_fallback',blockers)
+
+
+def build_do_plan_grid_support(*,input_result:dict[str,Any],energy_need_result:dict[str,Any]|None=None,reserve_result:dict[str,Any]|None=None,trigger_kwh:float=DEFAULT_GRID_CHARGE_TRIGGER_KWH)->dict[str,Any]:
     trigger=_finite(trigger_kwh,non_negative=True); base=_base(input_result,trigger if trigger is not None else DEFAULT_GRID_CHARGE_TRIGGER_KWH); blockers=[]
     if trigger is None: blockers.append('grid_charge_trigger_invalid')
-    if input_result.get('status')!='ready' or input_result.get('fully_valid_hours')!=72: blockers.append('planner_input_not_ready')
-    if energy_need_result.get('status')!='ready' or energy_need_result.get('valid') is not True: blockers.append('energy_need_not_ready')
-    if energy_need_result.get('input_rows_signature')!=input_result.get('rows_signature'): blockers.append('input_signature_mismatch')
-    rows=input_result.get('rows'); raw=_finite(energy_need_result.get('additional_grid_charge_kwh'),non_negative=True); soc=_finite(energy_need_result.get('soc_percent'),non_negative=True); first_solar=_utc(energy_need_result.get('first_usable_solar'))
+    if input_result.get('status') not in {'ready','runtime_blocked'} or input_result.get('fully_valid_hours')!=72: blockers.append('planner_input_not_structurally_ready')
+    rows=input_result.get('rows')
+    raw,soc,first_solar,handoff_source,handoff_blockers=_handoff(reserve_result,energy_need_result,input_result)
+    blockers.extend(handoff_blockers)
     if not isinstance(rows,list) or len(rows)!=72: blockers.append('rows_not_exactly_72')
-    if raw is None: blockers.append('additional_grid_charge_invalid')
+    if raw is None: blockers.append('grid_support_deficit_invalid')
     if soc is None or soc>100: blockers.append('soc_invalid')
     if first_solar is None: blockers.append('first_usable_solar_invalid')
-    if blockers: return _blocked(base,blockers)
+    if blockers: return _blocked({**base,'handoff_source':handoff_source},blockers)
     assert trigger is not None and raw is not None and soc is not None and first_solar is not None and isinstance(rows,list)
     slots,native_blockers=_native_slots(rows)
-    if native_blockers: return _blocked(base,native_blockers)
-    free_capacity=BATTERY_CAPACITY_KWH*max(100.0-soc,0.0)/100.0
-    chargeable=min(raw,free_capacity); unavoidable=max(raw-chargeable,0.0); required_input=chargeable/(CHARGE_EFFICIENCY_PERCENT/100.0) if chargeable>EPS else 0.0
-    target_soc=min(100.0,soc+(chargeable/BATTERY_CAPACITY_KWH*100.0))
+    if native_blockers: return _blocked({**base,'handoff_source':handoff_source},native_blockers)
+
+    ce=CHARGE_EFFICIENCY_PERCENT/100.0
+    required_input=raw/ce if raw>EPS else 0.0
     triggered=raw>trigger
-    common={**base,'additional_grid_charge_kwh':round(raw,3),'grid_charge_triggered':triggered,'chargeable_deficit_battery_kwh':round(chargeable,3),'unavoidable_shortfall_battery_kwh':round(unavoidable,3),'required_grid_charge_input_kwh':round(required_input,3),'target_soc_after_safety_charge_percent':round(target_soc,3),'capacity_limited_shortfall':unavoidable>EPS,'first_usable_solar':first_solar.isoformat(),'soc_percent':round(soc,3)}
+    current_free_capacity=BATTERY_CAPACITY_KWH*max(100.0-soc,0.0)/100.0
+    target_soc=min(100.0,soc+(min(raw,current_free_capacity)/BATTERY_CAPACITY_KWH*100.0))
+    common={**base,'handoff_source':handoff_source,'additional_grid_charge_kwh':round(raw,3),'grid_support_deficit_battery_kwh':round(raw,3),'grid_charge_triggered':triggered,'chargeable_deficit_battery_kwh':round(raw,3),'unavoidable_shortfall_battery_kwh':0.0,'required_grid_charge_input_kwh':round(required_input,3),'target_soc_after_safety_charge_percent':round(target_soc,3),'capacity_limited_shortfall':False,'first_usable_solar':first_solar.isoformat(),'soc_percent':round(soc,3),'feasibility_basis':'dynamic_pre_solar_charge_window'}
     if not triggered:
         return {**common,'status':'ready','valid':True,'reason':'below_trigger','trigger_reason':'below_trigger','blockers':[],'grid_charge_deadline':None,'eligible_charge_slot_count':0,'selected_charge_slots':[],'selected_charge_slot_count':0,'selected_charge_input_kwh_total':0.0,'selected_charge_stored_kwh_total':0.0,'weighted_average_import_price':None,'effective_stored_cost_per_kwh':None,'candidate_charge_cost_eur':0.0,'baseline_grid_support_cost_eur':0.0,'candidate_72h_net_cost_eur':None,'economic_delta_eur':0.0,'solar_displacement_kwh':0.0,'safety_charge_fully_allocated':True,'unallocated_chargeable_deficit_battery_kwh':0.0}
+
     baseline=_simulate(slots,start_soc=soc)
-    deadline=_utc(baseline['first_grid_support_need']) or first_solar
-    eligible=[slot for slot in slots if _utc(slot['start']) is not None and _utc(slot['start'])<deadline]
-    # initial economic ordering by true all-in import price; same constant efficiency => same effective order.
-    # near-equal prices prefer less same-slot solar surplus, then later safe slot.
+    deadline=first_solar
+    eligible=[slot for slot in slots if (_utc(slot['start']) is not None and _utc(slot['start'])<deadline)]
     def key(slot):
         surplus=max(slot['solar_kwh']-slot['home_kwh'],0.0)
         return (round(slot['import_price']/PRICE_TIE_EUR_PER_KWH),surplus,-_utc(slot['start']).timestamp())
     eligible.sort(key=key)
     max_slot_input=MAX_CHARGE_POWER_W/1000.0*0.25
-    plan={}; remaining=required_input; selected=[]; projected_soc=soc
+    plan:dict[str,float]={}
+    previous_actual=0.0
     for slot in eligible:
-        if remaining<=EPS: break
+        if previous_actual*ce+EPS>=raw: break
         solar_surplus=max(slot['solar_kwh']-slot['home_kwh'],0.0)
-        available=max(0.0,max_slot_input-solar_surplus)
-        alloc=min(available,remaining)
-        if alloc<=EPS: continue
-        plan[slot['start']]=alloc; remaining-=alloc; stored=alloc*(CHARGE_EFFICIENCY_PERCENT/100.0); projected_soc=min(100.0,projected_soc+stored/BATTERY_CAPACITY_KWH*100.0)
-        selected.append({'start':slot['start'],'end':slot['end'],'import_price_all_in':round(slot['import_price'],6),'available_charge_input_kwh':round(available,6),'allocated_charge_input_kwh':round(alloc,6),'stored_battery_kwh':round(stored,6),'projected_soc_after_percent':round(projected_soc,3),'solar_charge_headroom_used_kwh':round(solar_surplus,6),'estimated_solar_displacement_kwh':0.0,'selection_reason':'lowest_true_import_price_then_low_solar_then_later_safe','source_resolution_minutes':slot.get('source_resolution_minutes'),'kind':slot.get('kind')})
+        request=max(0.0,max_slot_input-solar_surplus)
+        if request<=EPS: continue
+        plan[slot['start']]=request
+        candidate=_simulate(slots,start_soc=soc,charge_plan=plan)
+        actual=candidate['grid_to_battery_input_kwh']
+        if actual<=previous_actual+EPS:
+            plan.pop(slot['start'],None)
+            continue
+        previous_actual=actual
+
     candidate=_simulate(slots,start_soc=soc,charge_plan=plan)
-    actual_input=candidate['grid_to_battery_input_kwh']; actual_stored=actual_input*(CHARGE_EFFICIENCY_PERCENT/100.0)
-    unallocated=max(chargeable-actual_stored,0.0); fully=unallocated<=EPS
+    actual_input=candidate['grid_to_battery_input_kwh']; actual_stored=actual_input*ce
+    unallocated=max(raw-actual_stored,0.0); fully=unallocated<=EPS
+    timeline_by_start={item['start']:item for item in candidate['timeline']}
+    selected=[]
+    for slot in eligible:
+        item=timeline_by_start.get(slot['start'])
+        actual_slot=_finite(item.get('grid_to_battery_kwh') if isinstance(item,dict) else None,non_negative=True) or 0.0
+        if actual_slot<=EPS: continue
+        stored=actual_slot*ce
+        selected.append({'start':slot['start'],'end':slot['end'],'import_price_all_in':round(slot['import_price'],6),'available_charge_input_kwh':round(MAX_CHARGE_POWER_W/1000.0*0.25-max(slot['solar_kwh']-slot['home_kwh'],0.0),6),'allocated_charge_input_kwh':round(actual_slot,6),'stored_battery_kwh':round(stored,6),'selection_reason':'lowest_true_import_price_with_dynamic_battery_headroom','source_resolution_minutes':slot.get('source_resolution_minutes'),'kind':slot.get('kind')})
     solar_displacement=max(0.0,baseline['solar_to_battery_stored_kwh']-candidate['solar_to_battery_stored_kwh'])
-    # distribute observed aggregate displacement across selected slots for diagnostics only.
-    if selected and solar_displacement>0:
-        each=solar_displacement/len(selected)
-        for item in selected: item['estimated_solar_displacement_kwh']=round(each,6)
     charge_cost=sum(item['allocated_charge_input_kwh']*item['import_price_all_in'] for item in selected)
-    weighted=(charge_cost/sum(item['allocated_charge_input_kwh'] for item in selected)) if selected and sum(item['allocated_charge_input_kwh'] for item in selected)>EPS else None
-    effective=(weighted/(CHARGE_EFFICIENCY_PERCENT/100.0)) if weighted is not None else None
-    status='ready' if fully else 'infeasible'; reason='meaningful_shortfall' if fully and unavoidable<=EPS else ('capacity_limited_shortfall' if fully else 'safe_charge_window_capacity_insufficient')
-    return {**common,'status':status,'valid':fully,'reason':reason,'trigger_reason':'capacity_limited_shortfall' if unavoidable>EPS else 'meaningful_shortfall','blockers':[] if fully else ['safe_charge_window_capacity_insufficient'],'grid_charge_deadline':deadline.isoformat(),'eligible_charge_slot_count':len(eligible),'selected_charge_slots':selected,'selected_charge_slot_count':len(selected),'selected_charge_input_kwh_total':round(actual_input,3),'selected_charge_stored_kwh_total':round(actual_stored,3),'weighted_average_import_price':round(weighted,6) if weighted is not None else None,'effective_stored_cost_per_kwh':round(effective,6) if effective is not None else None,'candidate_charge_cost_eur':round(charge_cost,4),'baseline_grid_support_cost_eur':round(baseline['net_grid_cost_eur'],4),'candidate_72h_net_cost_eur':round(candidate['net_grid_cost_eur'],4),'economic_delta_eur':round(candidate['net_grid_cost_eur']-baseline['net_grid_cost_eur'],4),'solar_displacement_kwh':round(solar_displacement,3),'safety_charge_fully_allocated':fully,'unallocated_chargeable_deficit_battery_kwh':round(unallocated,3),'baseline_end_soc_percent':baseline['end_soc_percent'],'candidate_end_soc_percent':candidate['end_soc_percent'],'source_resolution_minutes_seen':sorted({slot['source_resolution_minutes'] for slot in selected if slot['source_resolution_minutes'] is not None}),'candidate_resimulation_performed':True}
+    selected_input=sum(item['allocated_charge_input_kwh'] for item in selected)
+    weighted=(charge_cost/selected_input) if selected_input>EPS else None
+    effective=(weighted/ce) if weighted is not None else None
+    status='ready' if fully else 'infeasible'; reason='grid_support_charge_window_sufficient' if fully else 'safe_charge_window_capacity_insufficient'
+    return {**common,'status':status,'valid':fully,'reason':reason,'trigger_reason':'meaningful_shortfall','blockers':[] if fully else ['safe_charge_window_capacity_insufficient'],'grid_charge_deadline':deadline.isoformat(),'eligible_charge_slot_count':len(eligible),'selected_charge_slots':selected,'selected_charge_slot_count':len(selected),'selected_charge_input_kwh_total':round(actual_input,3),'selected_charge_stored_kwh_total':round(actual_stored,3),'weighted_average_import_price':round(weighted,6) if weighted is not None else None,'effective_stored_cost_per_kwh':round(effective,6) if effective is not None else None,'candidate_charge_cost_eur':round(charge_cost,4),'baseline_grid_support_cost_eur':round(baseline['net_grid_cost_eur'],4),'candidate_72h_net_cost_eur':round(candidate['net_grid_cost_eur'],4),'economic_delta_eur':round(candidate['net_grid_cost_eur']-baseline['net_grid_cost_eur'],4),'solar_displacement_kwh':round(solar_displacement,3),'safety_charge_fully_allocated':fully,'unallocated_chargeable_deficit_battery_kwh':round(unallocated,3),'baseline_end_soc_percent':baseline['end_soc_percent'],'candidate_end_soc_percent':candidate['end_soc_percent'],'source_resolution_minutes_seen':sorted({slot['source_resolution_minutes'] for slot in selected if slot['source_resolution_minutes'] is not None}),'candidate_resimulation_performed':True}
