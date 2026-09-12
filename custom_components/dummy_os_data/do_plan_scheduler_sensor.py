@@ -11,6 +11,8 @@ from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN, NAME, VERSION
+from .do_plan_operating_mode import apply_scheduler_mode_metadata, gate_store_for_scheduler
+from .do_plan_operating_mode_sensor import get_do_plan_operating_mode_runtime
 from .do_plan_scheduler import build_do_plan_scheduler
 from .do_plan_store_sensor import DummyOSShadowPlanStoreRuntime, get_do_plan_store_runtime
 
@@ -21,6 +23,7 @@ class DummyOSPlanSchedulerRuntime:
     def __init__(self, coordinator: Any, store_runtime: DummyOSShadowPlanStoreRuntime) -> None:
         self.coordinator = coordinator
         self.store_runtime = store_runtime
+        self.mode_runtime = get_do_plan_operating_mode_runtime(coordinator)
         self._cached_result: dict[str, Any] | None = None
         self._cache_key: tuple[Any, ...] | None = None
 
@@ -28,6 +31,7 @@ class DummyOSPlanSchedulerRuntime:
         current = now or datetime.now(timezone.utc)
         summary = self.store_runtime.summary()
         snapshot = self.store_runtime.snapshot
+        mode = self.mode_runtime.result()
         # Scheduler timing must respect max_start_delay_minutes exactly at each
         # evaluation. The decision signature itself remains native-quarter stable.
         key = (
@@ -37,13 +41,17 @@ class DummyOSPlanSchedulerRuntime:
             summary.get("store_valid"),
             summary.get("persistence_loaded"),
             summary.get("manual_priority_ok"),
+            mode.get("operating_mode_signature"),
+            mode.get("status"),
         )
         if key != self._cache_key or self._cached_result is None:
+            gated_snapshot, mode_blockers = gate_store_for_scheduler(snapshot, mode)
             result = build_do_plan_scheduler(
-                store_snapshot=deepcopy(snapshot),
+                store_snapshot=deepcopy(gated_snapshot),
                 store_summary=summary,
                 now=current,
             )
+            result = apply_scheduler_mode_metadata(result, mode, mode_blockers)
             result["store_status"] = summary.get("status")
             result["store_valid"] = summary.get("store_valid")
             result["persistence_loaded"] = summary.get("persistence_loaded")
@@ -73,6 +81,7 @@ class _SchedulerEntityMixin:
         self.coordinator = runtime.coordinator
         self._remove_store_listener = None
         self._remove_coordinator_listener = None
+        self._remove_mode_listener = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -87,20 +96,25 @@ class _SchedulerEntityMixin:
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         await self.runtime.store_runtime.async_ensure_loaded()
+        await self.runtime.mode_runtime.async_ensure_loaded()
         self._remove_store_listener = self.runtime.store_runtime.add_listener(self._handle_update)
         self._remove_coordinator_listener = self.coordinator.async_add_listener(self._handle_update)
+        self._remove_mode_listener = self.runtime.mode_runtime.add_listener(self._handle_update)
         self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
-        if self._remove_store_listener is not None:
-            self._remove_store_listener()
-        if self._remove_coordinator_listener is not None:
-            self._remove_coordinator_listener()
+        for remove in (
+            self._remove_store_listener,
+            self._remove_coordinator_listener,
+            self._remove_mode_listener,
+        ):
+            if remove is not None:
+                remove()
         await super().async_will_remove_from_hass()
 
     @callback
     def _handle_update(self) -> None:
-        """Handle event-loop owned coordinator/store updates."""
+        """Handle event-loop owned coordinator/store/mode updates."""
         self.async_write_ha_state()
 
 
@@ -138,6 +152,8 @@ class DummyOSPlanSchedulerReadyBinarySensor(_SchedulerEntityMixin, BinarySensorE
             "selected_slot_id": result.get("selected_slot_id"),
             "selected_plan_id": result.get("selected_plan_id"),
             "decision_signature": result.get("decision_signature"),
+            "operating_mode_signature": result.get("operating_mode_signature"),
+            "effective_mode": result.get("effective_mode"),
             "blockers": result.get("blockers", []),
             "shadow_only": True,
             "active_use_permitted": False,

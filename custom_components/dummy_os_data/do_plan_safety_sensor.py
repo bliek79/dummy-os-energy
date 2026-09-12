@@ -11,6 +11,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import DOMAIN, NAME, VERSION
+from .do_plan_operating_mode import apply_prestart_mode_gate, apply_safety_mode_gate
 from .do_plan_safety import build_do_plan_prestart, build_do_plan_safety
 from .do_plan_scheduler_sensor import DummyOSPlanSchedulerRuntime, get_do_plan_scheduler_runtime
 from .do_plan_soc_contract_sensor import RAW_SOC_ENTITY, get_do_plan_soc_contract_runtime
@@ -26,6 +27,7 @@ class DummyOSPlanSafetyRuntime:
         self.coordinator = coordinator
         self.scheduler_runtime = scheduler_runtime
         self.store_runtime = scheduler_runtime.store_runtime
+        self.mode_runtime = scheduler_runtime.mode_runtime
         self._cached_safety: dict[str, Any] | None = None
         self._cached_prestart: dict[str, Any] | None = None
         self._cache_key: tuple[Any, ...] | None = None
@@ -57,7 +59,16 @@ class DummyOSPlanSafetyRuntime:
         snapshot = deepcopy(self.store_runtime.snapshot)
         soc = self._soc_percent()
         reserve = self._reserve_result()
-        key = (current.astimezone(timezone.utc).isoformat(), repr(snapshot), repr(scheduler), soc, repr(reserve))
+        mode = self.mode_runtime.result()
+        key = (
+            current.astimezone(timezone.utc).isoformat(),
+            repr(snapshot),
+            repr(scheduler),
+            soc,
+            repr(reserve),
+            mode.get("operating_mode_signature"),
+            mode.get("status"),
+        )
         if key != self._cache_key or self._cached_safety is None or self._cached_prestart is None:
             safety = build_do_plan_safety(
                 scheduler_result=scheduler,
@@ -66,12 +77,14 @@ class DummyOSPlanSafetyRuntime:
                 soc_percent=soc,
                 now=current,
             )
+            safety = apply_safety_mode_gate(safety, mode)
             prestart = build_do_plan_prestart(
                 scheduler_result=scheduler,
                 safety_result=safety,
                 store_snapshot=snapshot,
                 now=current,
             )
+            prestart = apply_prestart_mode_gate(prestart, scheduler, safety, mode)
             safety["reserve_status"] = reserve.get("status")
             safety["reserve_valid"] = reserve.get("valid")
             safety["reserve_source_entity"] = RESERVE_ENTITY
@@ -109,6 +122,7 @@ class _SafetyEntityMixin:
         self._remove_store_listener = None
         self._remove_coordinator_listener = None
         self._remove_source_listener = None
+        self._remove_mode_listener = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -117,20 +131,31 @@ class _SafetyEntityMixin:
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         await self.runtime.store_runtime.async_ensure_loaded()
+        await self.runtime.mode_runtime.async_ensure_loaded()
         self._remove_store_listener = self.runtime.store_runtime.add_listener(self._handle_update)
         self._remove_coordinator_listener = self.coordinator.async_add_listener(self._handle_update)
-        self._remove_source_listener = async_track_state_change_event(self.coordinator.hass, [RAW_SOC_ENTITY, RESERVE_ENTITY], self._handle_source_update)
+        self._remove_mode_listener = self.runtime.mode_runtime.add_listener(self._handle_update)
+        self._remove_source_listener = async_track_state_change_event(
+            self.coordinator.hass,
+            [RAW_SOC_ENTITY, RESERVE_ENTITY],
+            self._handle_source_update,
+        )
         self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
-        for remove in (self._remove_store_listener, self._remove_coordinator_listener, self._remove_source_listener):
+        for remove in (
+            self._remove_store_listener,
+            self._remove_coordinator_listener,
+            self._remove_source_listener,
+            self._remove_mode_listener,
+        ):
             if remove is not None:
                 remove()
         await super().async_will_remove_from_hass()
 
     @callback
     def _handle_update(self) -> None:
-        """Handle event-loop owned coordinator/store updates."""
+        """Handle event-loop owned coordinator/store/mode updates."""
         self.async_write_ha_state()
 
     @callback
