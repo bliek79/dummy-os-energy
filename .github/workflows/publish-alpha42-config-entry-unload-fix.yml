@@ -1,4 +1,5 @@
 name: Publish alpha.42 config-entry unload fix
+# Controlled publication trigger after green Alpha42 parity/regression CI.
 
 on:
   push:
