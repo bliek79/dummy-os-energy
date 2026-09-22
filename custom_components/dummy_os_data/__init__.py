@@ -216,7 +216,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: DummyOSDataConfigEntry) 
     # setup. It is shadow-only: original planning/gating is active, but no
     # automatic execution listener or old physical services are registered.
     ems_runtime = await async_setup_ems_alpha76_runtime(hass, entry, coordinator)
-    entry.async_on_unload(lambda: hass.async_create_task(ems_runtime.async_shutdown_shadow()))
 
     # Register all platforms before any external source fetch. Entities expose
     # initializing/not_loaded until the background source wave supplies data.
@@ -226,7 +225,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: DummyOSDataConfigEntry) 
         _async_setup_cloud_sources(coordinator, weather_setup)
     )
     coordinator._source_setup_task = source_setup_task
-    entry.async_on_unload(source_setup_task.cancel)
 
     _async_remove_degree_days_runtime_states(hass)
     _async_migrate_generated_entity_ids(hass)
