@@ -35,7 +35,7 @@ Dummy OS Energy provides:
 
 Dummy OS Energy does **not** provide an EMS/planner runtime.
 
-The internal `do_plan_*`, Plan Store, Scheduler, Safety, manual-plan controls, Presence/Away scheduling and Operating Mode stack that existed in the 0.2.0 alpha development line was removed in `0.2.0-alpha.36`.
+The internal `do_plan_*`, Plan Store, Scheduler, Safety, manual-plan controls, Presence/Away scheduling and Operating Mode stack that existed in the 0.2.0 alpha development line was removed in `0.2.0-alpha.43`.
 
 The simple Energy Forecast profile selector remains:
 
@@ -60,7 +60,7 @@ Forecast/data entities use:
 - `do_prices_*`
 - `do_degree_days_*`
 
-No active `do_plan_*` namespace is part of Dummy OS Energy from alpha.36 onward; planner ownership is singular in DOEMS.
+No active `do_plan_*` namespace is part of Dummy OS Energy from alpha.43 onward; planner ownership is singular in DOEMS.
 
 ## Project status
 

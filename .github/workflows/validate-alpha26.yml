@@ -50,4 +50,4 @@ jobs:
           grep -F 'PLATFORMS = ["sensor", "select"]' custom_components/dummy_os_data/const.py
       - name: Verify forecast-only boundary
         run: |
-          python -m pytest -q tests/test_alpha36_forecast_only_scope.py
+          python -m pytest -q tests/test_alpha43_forecast_only_scope.py
