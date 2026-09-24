@@ -1,0 +1,62 @@
+name: Validate alpha.43 forecast-only reset
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'custom_components/dummy_os_data/**'
+      - 'tests/**'
+      - 'README.md'
+      - 'RELEASE_NOTES*.md'
+      - '.github/workflows/validate-alpha43-forecast-only.yml'
+      - '.github/workflows/publish-alpha43.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pytest
+      - name: Compile
+        run: python -m compileall -q custom_components/dummy_os_data tests
+      - name: Full remaining tests
+        run: python -m pytest -q
+      - name: Forecast-only focused regressions
+        run: |
+          python -m pytest -q \
+            tests/test_alpha43_forecast_only_scope.py \
+            tests/test_alpha30_startup_performance.py \
+            tests/test_alpha29_price_buffer.py \
+            tests/test_energy_profile_contract_step9.py \
+            tests/test_horizon_quality_sensor_contract.py \
+            tests/test_model_health_sensor_contract.py \
+            tests/test_pre_step5_health_fix.py \
+            tests/test_pre_step5_remaining_main_thread_fix.py \
+            tests/test_pre_step5_final_two_main_thread_fix.py \
+            tests/test_pre_step5_time_windows_main_thread_fix.py \
+            tests/test_pre_step5_evaluation_metrics_main_thread_fix.py
+      - name: Version and scope gate
+        run: |
+          python - <<'PYCODE'
+          import ast, json
+          from pathlib import Path
+          root = Path('custom_components/dummy_os_data')
+          version = next(
+              ast.literal_eval(n.value)
+              for n in ast.parse((root/'const.py').read_text()).body
+              if isinstance(n, ast.Assign)
+              and any(isinstance(t, ast.Name) and t.id == 'VERSION' for t in n.targets)
+          )
+          manifest = json.loads((root/'manifest.json').read_text())
+          assert version == manifest['version'] == '0.2.0-alpha.43'
+          assert 'PLATFORMS = ["sensor", "select"]' in (root/'const.py').read_text()
+          sensor = (root/'sensor.py').read_text()
+          select = (root/'select.py').read_text()
+          init = (root/'__init__.py').read_text()
+          active = '\n'.join((sensor, select, init))
+          for marker in ('do_plan_', 'presence_runtime', 'DummyOSPlanOperatingMode', 'manual_plan_'):
+              assert marker not in active, marker
+          PYCODE
