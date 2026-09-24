@@ -116,7 +116,7 @@ class ReleaseConsistencyTests(unittest.TestCase):
 
     def test_observer_runtime_names_are_explicit_and_canonical(self) -> None:
         sensor_source = (ROOT / "custom_components/dummy_os_data/sensor.py").read_text()
-        for class_name, base_class, expected_name in (("DummyOSEnergyPeakLearningSensor", "DummyOSAsyncPlannerResultSensor", "DO Energy Peak Learning"),("DummyOSEnergyTimeWindowsSensor", "DummyOSBaseSensor", "DO Energy Time Windows"),("DummyOSEnergyRecencyWeightingSensor", "DummyOSBaseSensor", "DO Energy Recency Weighting")):
+        for class_name, base_class, expected_name in (("DummyOSEnergyPeakLearningSensor", "DummyOSAsyncForecastResultSensor", "DO Energy Peak Learning"),("DummyOSEnergyTimeWindowsSensor", "DummyOSBaseSensor", "DO Energy Time Windows"),("DummyOSEnergyRecencyWeightingSensor", "DummyOSBaseSensor", "DO Energy Recency Weighting")):
             start = sensor_source.index(f"class {class_name}({base_class}):"); next_class = sensor_source.find("\n\nclass ", start + 1); block = sensor_source[start:] if next_class == -1 else sensor_source[start:next_class]
             self.assertIn(f'_attr_name = "{expected_name}"', block); self.assertIn('def name(self) -> str:', block); self.assertIn(f'return "{expected_name}"', block); self.assertNotIn('return "Dummy"', block)
 
