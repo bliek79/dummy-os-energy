@@ -11,7 +11,6 @@ from homeassistant.const import PERCENTAGE, UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -36,23 +35,8 @@ from .evaluation import (
 from .time_windows import calculate_time_windows
 from .recency_weighting import calculate_recency_weighting
 from .forecast import HomeBaselineForecast
-from .planner_time_contract import build_time_contract, utc
-from .planner_time_views import forecast_transport
-from .planner_time_runtime import read_soc_bridge, subscribe_bridge_recovery
 from .horizon_quality import calculate_horizon_quality
 from .model_health import calculate_model_health_readiness
-from .forecast_planner_contract import build_forecast_planner_contract
-from .do_plan_input import build_do_plan_input_72h
-from .do_plan_energy_need import build_do_plan_energy_need
-from .do_plan_reserve_soc import build_do_plan_reserve_soc
-from .do_plan_soc_contract_sensor import RAW_SOC_ENTITY, build_do_plan_soc_contract_sensors, get_do_plan_soc_contract_runtime
-from .do_plan_preview_sensor import build_do_plan_preview_sensors
-from .do_plan_72h_sensor import build_do_plan_72h_sensors
-from .do_plan_grid_support_sensor import build_do_plan_grid_support_sensors
-from .planner_hours import (
-    aggregate_planner_hours,
-    required_generated_slot_count,
-)
 from .home_input_sensor import build_home_input_sensors
 from .solar_sensor import build_solar_sensors
 from .weather import (
@@ -82,15 +66,6 @@ async def async_setup_entry(
             DummyOSForecastModelSensor(coordinator),
             DummyOSHomeForecastSensor(coordinator),
             DummyOSHomeForecastTimelineSensor(coordinator),
-            DummyOSEnergyForecastPlannerHoursSensor(coordinator),
-            DummyOSEnergyForecastPlannerContractSensor(coordinator),
-            DummyOSPlanInput72hSensor(coordinator),
-            *build_do_plan_soc_contract_sensors(coordinator),
-            DummyOSPlanEnergyNeedSensor(coordinator),
-            DummyOSPlanReserveSOCSensor(coordinator),
-            *build_do_plan_preview_sensors(coordinator),
-            *build_do_plan_72h_sensors(coordinator),
-            *build_do_plan_grid_support_sensors(coordinator),
             DummyOSHomeForecastNextQuarterSensor(coordinator),
             DummyOSHomeForecastCoverageSensor(coordinator),
             DummyOSHomeForecastConfidenceSensor(coordinator),
@@ -353,43 +328,20 @@ class DummyOSHomeForecastTimelineSensor(DummyOSBaseSensor):
         }
 
 
-def _planner_runtime_snapshot(
+def _forecast_runtime_snapshot(
     coordinator: DummyOSHomeDataCoordinator,
     *,
     now: datetime | None = None,
-    soc_percent: float | None = None,
 ) -> dict[str, Any]:
-    """Capture time once before selecting all planner sources on the HA thread."""
-    reference = utc(now or dt_util.utcnow())
-    contract = build_time_contract(reference)
+    """Capture only the immutable data needed by forecast/quality calculations."""
     return {
         "records": list(coordinator.records),
         "evaluations": list(coordinator.evaluations),
         "horizon_daily_stats": dict(coordinator.horizon_daily_stats),
         "profile": coordinator.profile,
         "source_available": coordinator.source_available,
-        "solar_points": list(coordinator.solar.planner_points_for_window(contract)),
-        "price_points": list(coordinator.prices.planner_points_for_window(contract, include_neighbours=True)),
-        "solar_status": coordinator.solar.source_status,
-        "prices_status": coordinator.prices.status,
-        "prices_freshness": coordinator.prices.freshness,
-        "now": reference,
-        "soc_percent": soc_percent,
-        "time_contract": contract,
+        "now": now or dt_util.utcnow(),
     }
-
-
-def _build_planner_hours_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    reference = snapshot["now"]
-    contract = snapshot.get("time_contract") or build_time_contract(reference)
-    profile = snapshot["profile"]
-    slots = HomeBaselineForecast(snapshot["records"]).build(
-        profile, now=reference, slot_count=FORECAST_SLOTS, window_start=utc(contract["window_start"])
-    )
-    result = forecast_transport(slots, profile=profile, contract=contract)
-    if profile not in PROFILE_LEARNING_OPTIONS:
-        result["status"] = "profile_unclassified"
-    return result
 
 
 def _build_model_health_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -427,70 +379,8 @@ def _build_public_forecast_from_snapshot(snapshot: dict[str, Any]) -> list[Any]:
     )
 
 
-def _build_contract_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    return build_forecast_planner_contract(
-        planner_hours=_build_planner_hours_from_snapshot(snapshot),
-        model_health=_build_model_health_from_snapshot(snapshot),
-    )
-
-
-def _build_plan_input_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    return build_do_plan_input_72h(
-        contract=_build_contract_from_snapshot(snapshot),
-        solar_points=snapshot["solar_points"],
-        price_points=snapshot["price_points"],
-        solar_status=snapshot["solar_status"],
-        prices_status=snapshot["prices_status"],
-        prices_freshness=snapshot["prices_freshness"],
-    )
-
-
-def _build_energy_need_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    result = build_do_plan_energy_need(
-        input_result=_build_plan_input_from_snapshot(snapshot),
-        soc_percent=snapshot.get("soc_percent"),
-        battery_capacity_kwh=7.2,
-        min_soc_percent=5.0,
-        safety_reserve_percent=7.0,
-        now=snapshot["now"],
-    )
-    result["soc_bridge"] = snapshot.get("soc_bridge")
-    if snapshot.get("soc_bridge") is not None:
-        result["measured_soc_percent"] = snapshot["soc_bridge"].get("measured_soc_percent")
-        result["planner_start_soc_percent"] = snapshot["soc_bridge"].get("planner_start_soc_percent")
-        result["soc_time_basis"] = "planner_window_start_estimate"
-    result["soc_source_entity"] = snapshot.get("soc_source_entity", "sensor.do_plan_soc_contract")
-    result["source_layer_status"] = "central_soc_contract_v1"
-    return result
-
-
-def _build_reserve_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    energy_need_result = _build_energy_need_from_snapshot(snapshot)
-    result = build_do_plan_reserve_soc(energy_need_result=energy_need_result)
-    result["energy_need_entity"] = "sensor.do_plan_energy_need"
-    result["soc_source_entity"] = energy_need_result.get("soc_source_entity")
-    result["source_layer_status"] = energy_need_result.get("source_layer_status")
-    return result
-
-
-def _build_planner_hours_result(
-    coordinator: DummyOSHomeDataCoordinator,
-    *,
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    """Backward-compatible synchronous helper for tests/internal callers."""
-    return _build_planner_hours_from_snapshot(
-        _planner_runtime_snapshot(coordinator, now=now)
-    )
-
-
-def _build_do_plan_input_result(coordinator: DummyOSHomeDataCoordinator) -> dict[str, Any]:
-    """Backward-compatible synchronous helper for tests/internal callers."""
-    return _build_plan_input_from_snapshot(_planner_runtime_snapshot(coordinator))
-
-
-class DummyOSAsyncPlannerResultSensor(DummyOSBaseSensor):
-    """Executor-backed cached result sensor for expensive planner/model calculations."""
+class DummyOSAsyncForecastResultSensor(DummyOSBaseSensor):
+    """Executor-backed cached result sensor for forecast/model calculations."""
 
     def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
         super().__init__(coordinator)
@@ -525,22 +415,13 @@ class DummyOSAsyncPlannerResultSensor(DummyOSBaseSensor):
             result = await self.hass.async_add_executor_job(
                 self._calculate_result, snapshot
             )
-            contract = result.get("time_contract")
-            if contract and contract["window_id"] != build_time_contract(dt_util.utcnow())["window_id"]:
-                result = {**result, "status": "stale", "valid": False,
-                          "reason": "planner_window_elapsed", "blockers": ["planner_window_elapsed"],
-                          "time_alignment_current": False}
-                if snapshot.get("time_contract") is not None:
-                    self._refresh_pending = True
-            else:
-                result["time_alignment_current"] = True
             self._cached_result = result
             self.async_write_ha_state()
             if not self._refresh_pending:
                 return
 
     def _snapshot(self) -> dict[str, Any]:
-        return _planner_runtime_snapshot(self.coordinator)
+        return _forecast_runtime_snapshot(self.coordinator)
 
     def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
@@ -548,184 +429,14 @@ class DummyOSAsyncPlannerResultSensor(DummyOSBaseSensor):
     def _initial_result(self) -> dict[str, Any]:
         return {
             "status": "initializing",
-            "blockers": ["planner_calculation_pending"],
+            "blockers": ["forecast_calculation_pending"],
         }
 
     def _result(self) -> dict[str, Any]:
         return self._cached_result or self._initial_result()
 
 
-class DummyOSEnergyForecastPlannerHoursSensor(DummyOSAsyncPlannerResultSensor):
-    """Step 14 exact 72 complete planner-hour forecast interface."""
-
-    _attr_name = "DO Energy Forecast Planner Hours"
-    _attr_unique_id = "do_energy_forecast_planner_hours"
-    _attr_suggested_object_id = "do_energy_forecast_planner_hours"
-    _attr_icon = "mdi:clock-outline"
-    _unrecorded_attributes = frozenset({"hours"})
-
-    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        return _build_planner_hours_from_snapshot(snapshot)
-
-    def _initial_result(self) -> dict[str, Any]:
-        return {
-            "status": "initializing",
-            "valid_hour_count": 0,
-            "hours": [],
-            "blockers": ["planner_calculation_pending"],
-        }
-
-    @property
-    def native_value(self) -> int:
-        return int(self._result().get("valid_hour_count", 0))
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return dict(self._result())
-
-
-class DummyOSEnergyForecastPlannerContractSensor(DummyOSAsyncPlannerResultSensor):
-    """Stable Step 15 Forecast -> Planner contract."""
-
-    _attr_name = "DO Energy Forecast Planner Contract"
-    _attr_unique_id = "do_energy_forecast_planner_contract"
-    _attr_suggested_object_id = "do_energy_forecast_planner_contract"
-    _attr_icon = "mdi:connection"
-    _unrecorded_attributes = frozenset({"hours"})
-
-    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        return _build_contract_from_snapshot(snapshot)
-
-    @property
-    def native_value(self) -> str:
-        return str(self._result().get("status", "initializing"))
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return dict(self._result())
-
-
-class DummyOSPlanInput72hSensor(DummyOSAsyncPlannerResultSensor):
-    """Observer-only exact 72-hour input matrix for the new internal planner."""
-
-    _attr_name = "DO Plan Input 72h"
-    _attr_unique_id = "do_plan_input_72h"
-    _attr_suggested_object_id = "do_plan_input_72h"
-    _attr_icon = "mdi:table-clock"
-    _unrecorded_attributes = frozenset({"rows", "slots", "source_time_audit"})
-
-    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
-        super().__init__(coordinator)
-        self._remove_solar_listener = None
-        self._remove_prices_listener = None
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self._remove_solar_listener = self.coordinator.solar.async_add_listener(self._handle_update)
-        self._remove_prices_listener = self.coordinator.prices.async_add_listener(self._handle_update)
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._remove_solar_listener is not None:
-            self._remove_solar_listener()
-        if self._remove_prices_listener is not None:
-            self._remove_prices_listener()
-        await super().async_will_remove_from_hass()
-
-    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        return _build_plan_input_from_snapshot(snapshot)
-
-    @property
-    def native_value(self) -> str:
-        return str(self._result().get("status", "initializing"))
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return dict(self._result())
-
-
-class DummyOSPlanEnergyNeedSensor(DummyOSPlanInput72hSensor):
-    """Observer-only battery energy need until usable solar returns."""
-
-    _attr_name = "DO Plan Energy Need"
-    _attr_unique_id = "do_plan_energy_need"
-    _attr_suggested_object_id = "do_plan_energy_need"
-    _attr_icon = "mdi:battery-clock-outline"
-
-    SOC_ENTITY = "sensor.do_plan_soc_contract"
-    BATTERY_CAPACITY_KWH = 7.2
-    MIN_SOC_PERCENT = 5.0
-    SAFETY_RESERVE_PERCENT = 7.0
-
-    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
-        super().__init__(coordinator)
-        self._remove_soc_listener = None
-        self._remove_bridge_recovery = None
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self._remove_bridge_recovery = subscribe_bridge_recovery(self)
-        self._remove_soc_listener = async_track_state_change_event(
-            self.coordinator.hass,
-            [RAW_SOC_ENTITY],
-            self._handle_soc_update,
-        )
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._remove_bridge_recovery is not None:
-            self._remove_bridge_recovery()
-        if self._remove_soc_listener is not None:
-            self._remove_soc_listener()
-        await super().async_will_remove_from_hass()
-
-    @callback
-    def _handle_soc_update(self, _event) -> None:
-        self._schedule_refresh()
-
-    def _soc_contract(self) -> dict[str, Any]:
-        return get_do_plan_soc_contract_runtime(self.coordinator).result()
-
-    def _soc_percent(self) -> float | None:
-        contract = self._soc_contract()
-        if contract.get("status") != "ready" or contract.get("valid") is not True:
-            return None
-        try:
-            value = float(contract.get("soc_percent"))
-        except (TypeError, ValueError):
-            return None
-        return value if 0.0 <= value <= 100.0 else None
-
-    def _snapshot(self) -> dict[str, Any]:
-        reference = dt_util.utcnow()
-        contract = get_do_plan_soc_contract_runtime(self.coordinator).result(now=reference)
-        snapshot = _planner_runtime_snapshot(self.coordinator, now=reference, soc_percent=contract.get("soc_percent"))
-        bridge = read_soc_bridge(self.coordinator, snapshot, contract)
-        self._last_soc_bridge_valid = bridge["valid"]
-        snapshot["soc_bridge"] = bridge
-        snapshot["soc_percent"] = bridge.get("planner_start_soc_percent") if bridge["valid"] else None
-        snapshot["soc_source_entity"] = "runtime:do_plan_soc_contract_v1"
-        snapshot["soc_contract_entity"] = self.SOC_ENTITY
-        snapshot["soc_contract_status"] = contract.get("status")
-        snapshot["soc_contract_valid"] = contract.get("valid")
-        snapshot["soc_raw_source_entity"] = contract.get("source_entity")
-        return snapshot
-
-    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        return _build_energy_need_from_snapshot(snapshot)
-
-
-class DummyOSPlanReserveSOCSensor(DummyOSPlanEnergyNeedSensor):
-    """Observer-only protected reserve-SOC position derived from Step 2."""
-
-    _attr_name = "DO Plan Reserve SOC"
-    _attr_unique_id = "do_plan_reserve_soc"
-    _attr_suggested_object_id = "do_plan_reserve_soc"
-    _attr_icon = "mdi:battery-lock-outline"
-
-    def _calculate_result(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        return _build_reserve_from_snapshot(snapshot)
-
-
-class DummyOSHomeForecastNextQuarterSensor(DummyOSAsyncPlannerResultSensor):
+class DummyOSHomeForecastNextQuarterSensor(DummyOSAsyncForecastResultSensor):
     _attr_name = "DO Energy Forecast Next Quarter"
     _attr_unique_id = "do_energy_forecast_next_quarter"
     _attr_suggested_object_id = "do_energy_forecast_next_quarter"
@@ -764,7 +475,7 @@ class DummyOSHomeForecastNextQuarterSensor(DummyOSAsyncPlannerResultSensor):
         return result
 
 
-class DummyOSHomeForecastCoverageSensor(DummyOSAsyncPlannerResultSensor):
+class DummyOSHomeForecastCoverageSensor(DummyOSAsyncForecastResultSensor):
     _attr_name = "DO Energy Forecast Coverage"
     _attr_unique_id = "do_energy_forecast_coverage"
     _attr_suggested_object_id = "do_energy_forecast_coverage"
@@ -812,7 +523,7 @@ class DummyOSHomeForecastCoverageSensor(DummyOSAsyncPlannerResultSensor):
         return result
 
 
-class DummyOSHomeForecastConfidenceSensor(DummyOSAsyncPlannerResultSensor):
+class DummyOSHomeForecastConfidenceSensor(DummyOSAsyncForecastResultSensor):
     _attr_name = "DO Energy Forecast Confidence"
     _attr_unique_id = "do_energy_forecast_confidence"
     _attr_suggested_object_id = "do_energy_forecast_confidence"
@@ -849,12 +560,12 @@ def _build_model_health_result(
     slots: list[Any],
 ) -> dict[str, Any]:
     """Backward-compatible synchronous helper for tests/internal callers."""
-    snapshot = _planner_runtime_snapshot(coordinator)
+    snapshot = _forecast_runtime_snapshot(coordinator)
     snapshot["now"] = slots[0].start if slots else snapshot["now"]
     return _build_model_health_from_snapshot(snapshot)
 
 
-class DummyOSHomeForecastModelHealthSensor(DummyOSAsyncPlannerResultSensor):
+class DummyOSHomeForecastModelHealthSensor(DummyOSAsyncForecastResultSensor):
     _attr_name = "DO Energy Forecast Model Health"
     _attr_unique_id = "do_energy_forecast_model_health"
     _attr_suggested_object_id = "do_energy_forecast_model_health"
@@ -1016,7 +727,7 @@ class DummyOSWeatherBaseSensor(SensorEntity):
         self.async_write_ha_state()
 
 
-class DummyOSAsyncQualitySensor(DummyOSAsyncPlannerResultSensor):
+class DummyOSAsyncQualitySensor(DummyOSAsyncForecastResultSensor):
     """Executor-backed base for expensive observer-only quality diagnostics."""
 
     _empty_collection_key = "items"
@@ -1495,7 +1206,7 @@ class DummyOSEnergyRecencyWeightingSensor(DummyOSBaseSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._result())
 
-class DummyOSEnergyPeakLearningSensor(DummyOSAsyncPlannerResultSensor):
+class DummyOSEnergyPeakLearningSensor(DummyOSAsyncForecastResultSensor):
     """Observer-only Step 6 Energy peak learning diagnostics."""
 
     _attr_name = "DO Energy Peak Learning"
