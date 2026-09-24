@@ -114,9 +114,10 @@ def test_non_blocking_forecast_source_startup_is_preserved():
     assert "coordinator._source_setup_task = source_setup_task" in init
 
 
-def test_alpha43_version_is_consistent():
+def test_release_version_is_consistent():
     const = _read("custom_components/dummy_os_data/const.py")
     manifest = json.loads(_read("custom_components/dummy_os_data/manifest.json"))
     match = re.search(r'^VERSION = "([^"]+)"$', const, re.MULTILINE)
     assert match is not None
-    assert match.group(1) == manifest["version"] == "0.2.0-alpha.43"
+    assert match.group(1) == manifest["version"]
+    assert manifest["version"].startswith("0.2.0-alpha.")

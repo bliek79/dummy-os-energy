@@ -212,8 +212,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: DummyOSDataConfigEntry) 
     # initializing/not_loaded until the background source wave supplies data.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    source_setup_task = hass.async_create_task(
-        _async_setup_cloud_sources(coordinator, weather_setup)
+    source_setup_task = entry.async_create_background_task(
+        hass,
+        _async_setup_cloud_sources(coordinator, weather_setup),
+        "Dummy OS Data cloud sources",
+        eager_start=False,
     )
     coordinator._source_setup_task = source_setup_task
     entry.async_on_unload(source_setup_task.cancel)
