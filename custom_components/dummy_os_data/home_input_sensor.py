@@ -10,9 +10,10 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import UnitOfPower
-from homeassistant.core import Event, EventStateChangedData, State, callback
+from homeassistant.core import CoreState, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -337,6 +338,7 @@ class DummyOSEnergyFallbackHierarchySensor(SensorEntity):
         self._cached_result: dict[str, Any] | None = None
         self._refresh_task = None
         self._refresh_pending = False
+        self._startup_unsub = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -350,6 +352,9 @@ class DummyOSEnergyFallbackHierarchySensor(SensorEntity):
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener is not None:
             self._remove_listener()
+        if self._startup_unsub is not None:
+            self._startup_unsub()
+            self._startup_unsub = None
         if self._refresh_task is not None and not self._refresh_task.done():
             self._refresh_task.cancel()
         await super().async_will_remove_from_hass()
@@ -360,10 +365,28 @@ class DummyOSEnergyFallbackHierarchySensor(SensorEntity):
 
     @callback
     def _schedule_refresh(self) -> None:
+        if self.hass.state is not CoreState.running:
+            self._refresh_pending = True
+            if self._startup_unsub is None:
+                self._startup_unsub = async_at_started(
+                    self.hass, self._async_startup_refresh
+                )
+            return
         if self._refresh_task is not None and not self._refresh_task.done():
             self._refresh_pending = True
             return
-        self._refresh_task = self.hass.async_create_task(self._async_refresh_result())
+        self._refresh_pending = False
+        self._refresh_task = self.coordinator.entry.async_create_background_task(
+            self.hass,
+            self._async_refresh_result(),
+            f"Dummy OS Data {type(self).__name__} refresh",
+            eager_start=False,
+        )
+
+    @callback
+    def _async_startup_refresh(self, hass: HomeAssistant) -> None:
+        self._startup_unsub = None
+        self._schedule_refresh()
 
     async def _async_refresh_result(self) -> None:
         while True:
@@ -414,6 +437,7 @@ class DummyOSEnergyMeaningfulConfidenceSensor(SensorEntity):
         self._cached_result: dict[str, Any] | None = None
         self._refresh_task = None
         self._refresh_pending = False
+        self._startup_unsub = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -427,6 +451,9 @@ class DummyOSEnergyMeaningfulConfidenceSensor(SensorEntity):
     async def async_will_remove_from_hass(self) -> None:
         if self._remove_listener is not None:
             self._remove_listener()
+        if self._startup_unsub is not None:
+            self._startup_unsub()
+            self._startup_unsub = None
         if self._refresh_task is not None and not self._refresh_task.done():
             self._refresh_task.cancel()
         await super().async_will_remove_from_hass()
@@ -437,10 +464,28 @@ class DummyOSEnergyMeaningfulConfidenceSensor(SensorEntity):
 
     @callback
     def _schedule_refresh(self) -> None:
+        if self.hass.state is not CoreState.running:
+            self._refresh_pending = True
+            if self._startup_unsub is None:
+                self._startup_unsub = async_at_started(
+                    self.hass, self._async_startup_refresh
+                )
+            return
         if self._refresh_task is not None and not self._refresh_task.done():
             self._refresh_pending = True
             return
-        self._refresh_task = self.hass.async_create_task(self._async_refresh_result())
+        self._refresh_pending = False
+        self._refresh_task = self.coordinator.entry.async_create_background_task(
+            self.hass,
+            self._async_refresh_result(),
+            f"Dummy OS Data {type(self).__name__} refresh",
+            eager_start=False,
+        )
+
+    @callback
+    def _async_startup_refresh(self, hass: HomeAssistant) -> None:
+        self._startup_unsub = None
+        self._schedule_refresh()
 
     async def _async_refresh_result(self) -> None:
         while True:
