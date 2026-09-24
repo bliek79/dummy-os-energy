@@ -2,7 +2,7 @@
 
 Dummy OS Energy is the Home Assistant forecast/data integration for Dummy OS. Its technical domain remains `dummy_os_data` for installation and registry compatibility.
 
-The integration is deliberately forecast-only. Planning, EMS, safety and shadow execution live in DOEMS. Physical battery authority remains outside this integration.
+The integration is deliberately forecast-only. Planning, EMS, safety and shadow execution live in DOEMS; Dummy OS Energy does not keep a second EMS stack. Physical battery authority remains outside this integration.
 
 ## Core architecture
 
