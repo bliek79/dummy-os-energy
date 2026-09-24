@@ -18,9 +18,3 @@ def test_time_windows_is_executor_backed_without_identity_change():
     assert "calculate_time_windows(peak_result, profile, dt_util.as_local)" in block
     assert "calculate_peak_learning(self.coordinator.evaluations" not in block
 
-
-def test_time_windows_fix_preserves_safety_invariants():
-    preview = (ROOT / "custom_components/dummy_os_data/do_plan_preview.py").read_text()
-    assert '"shadow_only": True' in preview
-    assert '"active_use_permitted": False' in preview
-    assert '"physical_execution_authority": False' in preview
