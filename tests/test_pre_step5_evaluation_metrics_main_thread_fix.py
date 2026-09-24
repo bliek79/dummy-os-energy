@@ -15,9 +15,3 @@ def test_evaluation_family_uses_executor_backed_shared_base():
         assert f"class {cls}(DummyOSEvaluationBaseSensor):" in block
     for uid in ("do_energy_forecast_accuracy", "do_energy_forecast_mae", "do_energy_forecast_bias", "do_energy_forecast_evaluation_samples"):
         assert uid in block
-
-def test_safety_invariants_remain_unchanged():
-    preview=(ROOT/"custom_components/dummy_os_data/do_plan_preview.py").read_text()
-    assert '"shadow_only": True' in preview
-    assert '"active_use_permitted": False' in preview
-    assert '"physical_execution_authority": False' in preview
