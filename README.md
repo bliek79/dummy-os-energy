@@ -60,7 +60,7 @@ Forecast/data entities use:
 - `do_prices_*`
 - `do_degree_days_*`
 
-No active `do_plan_*` namespace is part of Dummy OS Energy from alpha.36 onward.
+No active `do_plan_*` namespace is part of Dummy OS Energy from alpha.36 onward; planner ownership is singular in DOEMS.
 
 ## Project status
 
