@@ -127,9 +127,6 @@ _ENTITY_ID_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("sensor", "do_energy_fallback_hierarchy", "sensor.do_energy_fallback_hierarchy"),
     ("sensor", "do_energy_meaningful_confidence", "sensor.do_energy_meaningful_confidence"),
     ("sensor", "do_energy_forecast_quality_by_horizon", "sensor.do_energy_forecast_quality_by_horizon"),
-    ("sensor", "do_energy_forecast_planner_hours", "sensor.do_energy_forecast_planner_hours"),
-    ("sensor", "do_energy_forecast_planner_contract", "sensor.do_energy_forecast_planner_contract"),
-    ("sensor", "do_plan_input_72h", "sensor.do_plan_input_72h"),
     ("sensor", "do_degree_days_status", "sensor.do_degree_days_status"),
     ("sensor", "do_degree_days_history_days", "sensor.do_degree_days_history_days"),
     ("sensor", "do_degree_days_temperature_daily", "sensor.do_degree_days_temperature_daily"),
@@ -167,7 +164,7 @@ async def _async_setup_cloud_sources(
     except Exception as err:
         _LOGGER.warning("Dummy OS Data degree-days startup failed in background: %s", err)
 
-    # Planner/model sensors listen to the Home coordinator. One consolidated
+    # Forecast/model sensors listen to the Home coordinator. One consolidated
     # notification republishes their cached results after source initialization.
     coordinator._notify()
 
