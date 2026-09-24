@@ -1,6 +1,6 @@
-## Dummy OS Energy 0.2.0-alpha.36
+## Dummy OS Energy 0.2.0-alpha.43
 
-**Tag:** `0.2.0-alpha.36`
+**Tag:** `0.2.0-alpha.43`
 
 ### Forecast-only scope reset
 
@@ -26,7 +26,7 @@ This prerelease removes the unused internal EMS/planner and Presence/Away schedu
 
 ### Startup objective
 
-The reset follows a Home Assistant A/B test in which ZHA started cleanly when Dummy OS Data was disabled, while the preceding failing startup showed long-running Dummy OS Data planner/forecast tasks around the global bootstrap timeout. Alpha36 removes the unused planner/EMS runtime so the integration can remain enabled for its valuable forecast data without carrying a second EMS stack.
+The reset follows a Home Assistant A/B test in which ZHA started cleanly when Dummy OS Data was disabled, while the preceding failing startup showed long-running Dummy OS Data planner/forecast tasks around the global bootstrap timeout. Alpha43 removes the unused planner/EMS runtime so the integration can remain enabled for its valuable forecast data without carrying a second EMS stack.
 
 ### Architecture boundary
 
@@ -34,6 +34,10 @@ The reset follows a Home Assistant A/B test in which ZHA started cleanly when Du
 - DOEMS = planner, EMS, safety and shadow execution.
 - anker_ems remains the physical battery authority.
 - This release does not open DOEMS G6 or physical cutover.
+
+### Version note
+
+The cleanup was first prepared as alpha36, but that tag already existed historically in the repository. No existing tag was overwritten or moved. The release was therefore retargeted to the first free prerelease number: alpha43.
 
 ### Validation
 
@@ -43,7 +47,7 @@ Publication requires:
 - Alpha29 Prices buffer regression;
 - Alpha30 non-blocking startup regression;
 - Energy Profile, Model Health, Horizon Quality and forecast executor regressions;
-- Alpha36 scope-reset regression proving no active `do_plan_*`, Presence schedule or Operating Mode runtime remains.
+- Alpha43 scope-reset regression proving no active `do_plan_*`, Presence schedule or Operating Mode runtime remains.
 
 ---
 
