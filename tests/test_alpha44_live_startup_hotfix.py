@@ -58,6 +58,6 @@ def test_alpha44_or_later_version_is_consistent():
     match = re.search(r'^VERSION = "([^"]+)"$', const, re.MULTILINE)
     assert match is not None
     assert match.group(1) == manifest["version"]
-    version_match = re.fullmatch(r"0\\.2\\.0-alpha\\.(\\d+)", manifest["version"])
-    assert version_match is not None
-    assert int(version_match.group(1)) >= 44
+    prefix = "0.2.0-alpha."
+    assert manifest["version"].startswith(prefix)
+    assert int(manifest["version"].removeprefix(prefix)) >= 44
