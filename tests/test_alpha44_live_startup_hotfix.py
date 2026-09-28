@@ -55,7 +55,13 @@ def test_forecast_only_boundary_stays_closed():
 def test_alpha44_or_later_version_is_consistent():
     const = _read("custom_components/dummy_os_data/const.py")
     manifest = json.loads(_read("custom_components/dummy_os_data/manifest.json"))
-    match = re.search(r'^VERSION = "([^"]+)", const, re.MULTILINE)
+    match = re.search(r'^VERSION = "([^"]+)"
+    assert match is not None
+    assert match.group(1) == manifest["version"]
+    version_match = re.fullmatch(r"0\.2\.0-alpha\.(\d+)", manifest["version"])
+    assert version_match is not None
+    assert int(version_match.group(1)) >= 44
+, const, re.MULTILINE)
     assert match is not None
     assert match.group(1) == manifest["version"]
     version_match = re.fullmatch(r"0\.2\.0-alpha\.(\d+)", manifest["version"])
