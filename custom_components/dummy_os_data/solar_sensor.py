@@ -13,7 +13,17 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, FORECAST_SLOTS, NAME, SOLAR_MIN_VALID_COVERAGE, VERSION
-from .solar import OPEN_METEO_SOLAR_MODEL, SOLAR_HORIZON_HOURS, SOLAR_RESOLUTION_MINUTES
+from .solar import (
+    OPEN_METEO_SOLAR_MODEL,
+    SOLAR_HORIZON_HOURS,
+    SOLAR_RESOLUTION_MINUTES,
+    SOLAR_TEMPERATURE_CANDIDATE_MODEL,
+)
+from .solar_model import (
+    SOLAR_TEMPERATURE_ALPHA_REFERENCE,
+    SOLAR_TEMPERATURE_CELL_STC_C,
+    SOLAR_TEMPERATURE_ROSS_K_REFERENCE,
+)
 
 
 def build_solar_sensors(coordinator) -> list[SensorEntity]:
@@ -21,6 +31,9 @@ def build_solar_sensors(coordinator) -> list[SensorEntity]:
     return [
         DummyOSSolarStatusSensor(coordinator),
         DummyOSSolarTimelineSensor(coordinator),
+        DummyOSSolarTemperatureCandidateTimelineSensor(coordinator),
+        DummyOSSolarTemperatureCandidateNextQuarterSensor(coordinator),
+        DummyOSSolarTemperatureCandidateLastCompletedQuarterSensor(coordinator),
         DummyOSSolarDailySensor(coordinator, "today", "north"),
         DummyOSSolarDailySensor(coordinator, "today", "south"),
         DummyOSSolarDailySensor(coordinator, "today", "total"),
@@ -104,6 +117,9 @@ class DummyOSSolarStatusSensor(DummyOSSolarBaseSensor):
             "active_forecast_snapshot_available": self.solar.active_forecast_snapshot_available,
             "last_evaluation_status": evaluation.get("status") if evaluation else None,
             "last_evaluation_slot": evaluation.get("slot_id") if evaluation else None,
+            "temperature_candidate_status": self.solar.temperature_candidate_status,
+            "temperature_candidate_point_count": len(self.solar.temperature_candidate_points),
+            "temperature_candidate_last_error": self.solar.temperature_candidate_last_error,
             "mode": "observation_shadow",
         }
 
@@ -143,6 +159,121 @@ class DummyOSSolarTimelineSensor(DummyOSSolarBaseSensor):
             "recorder_points": "excluded",
             "points": [point.as_list() for point in points],
         }
+
+
+class DummyOSSolarTemperatureCandidateTimelineSensor(DummyOSSolarBaseSensor):
+    """Expose the F1 temperature candidate without replacing raw Solar."""
+
+    _attr_name = "DO Solar Temperature Candidate Timeline"
+    _attr_unique_id = "do_solar_temperature_candidate_timeline"
+    _attr_suggested_object_id = "do_solar_temperature_candidate_timeline"
+    _attr_icon = "mdi:thermometer-sun"
+    _unrecorded_attributes = frozenset({"points"})
+
+    @property
+    def native_value(self) -> int:
+        return len(self.solar.temperature_candidate_points)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        points = self.solar.temperature_candidate_points
+        return {
+            "candidate_status": self.solar.temperature_candidate_status,
+            "candidate_role": "parallel_observer",
+            "source": "open_meteo",
+            "attribution": "Weather data by Open-Meteo.com",
+            "model": SOLAR_TEMPERATURE_CANDIDATE_MODEL,
+            "raw_reference_model": OPEN_METEO_SOLAR_MODEL,
+            "resolution_minutes": SOLAR_RESOLUTION_MINUTES,
+            "horizon_hours": 72,
+            "slot_count": FORECAST_SLOTS,
+            "point_count": len(points),
+            "source_buffer_point_count": self.solar.temperature_candidate_source_point_count,
+            "last_error": self.solar.temperature_candidate_last_error,
+            "ross_coefficient": SOLAR_TEMPERATURE_ROSS_K_REFERENCE,
+            "temperature_coefficient_per_c": SOLAR_TEMPERATURE_ALPHA_REFERENCE,
+            "stc_cell_temperature_c": SOLAR_TEMPERATURE_CELL_STC_C,
+            "temperature_semantics": "ambient interval average from adjacent temperature_2m boundaries",
+            "calculation": "Tcell=Tamb_avg+GTI*k; factor=1+alpha*(Tcell-25C); then existing performance factor and Energy AC cap",
+            "point_format": "[unix_ms, north_kwh, south_kwh, total_kwh, north_kw, south_kw, total_kw, north_gti_wm2, south_gti_wm2, north_ambient_c, south_ambient_c, north_cell_c, south_cell_c, north_temp_factor, south_temp_factor]",
+            "interval_semantics": "slot_start; GTI backward-average timestamp shifted by 15 minutes",
+            "forecast_start": points[0].start.isoformat() if points else None,
+            "last_slot_start": points[-1].start.isoformat() if points else None,
+            "forecast_end": (
+                (points[-1].start + timedelta(minutes=SOLAR_RESOLUTION_MINUTES)).isoformat()
+                if points
+                else None
+            ),
+            "recorder_points": "excluded",
+            "points": [point.as_list() for point in points],
+        }
+
+
+class DummyOSSolarTemperatureCandidateNextQuarterSensor(DummyOSSolarBaseSensor):
+    """Expose the next F1 candidate slot for live inspection."""
+
+    _attr_name = "DO Solar Temperature Candidate Next Quarter"
+    _attr_unique_id = "do_solar_temperature_candidate_next_quarter"
+    _attr_suggested_object_id = "do_solar_temperature_candidate_next_quarter"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_icon = "mdi:thermometer-lines"
+
+    @property
+    def native_value(self) -> float | None:
+        point = self.solar.temperature_candidate_next_quarter_point()
+        return point.total_kwh if point else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        point = self.solar.temperature_candidate_next_quarter_point()
+        if point is None:
+            return {
+                "candidate_status": self.solar.temperature_candidate_status,
+                "last_error": self.solar.temperature_candidate_last_error,
+                "model": SOLAR_TEMPERATURE_CANDIDATE_MODEL,
+            }
+        return {
+            "candidate_status": self.solar.temperature_candidate_status,
+            "model": SOLAR_TEMPERATURE_CANDIDATE_MODEL,
+            "start": point.start.isoformat(),
+            "north_kwh": point.north_kwh,
+            "south_kwh": point.south_kwh,
+            "north_ambient_temperature_c": point.north_ambient_temperature_c,
+            "south_ambient_temperature_c": point.south_ambient_temperature_c,
+            "north_cell_temperature_c": point.north_cell_temperature_c,
+            "south_cell_temperature_c": point.south_cell_temperature_c,
+            "north_temperature_factor": point.north_temperature_factor,
+            "south_temperature_factor": point.south_temperature_factor,
+            "selection": "first_future_slot",
+        }
+
+
+class DummyOSSolarTemperatureCandidateLastCompletedQuarterSensor(DummyOSSolarBaseSensor):
+    """Expose the locked F1 candidate versus the same completed actual quarter."""
+
+    _attr_name = "DO Solar Temperature Candidate Evaluation Last Completed Quarter"
+    _attr_unique_id = "do_solar_temperature_candidate_evaluation_last_completed_quarter"
+    _attr_suggested_object_id = "do_solar_temperature_candidate_evaluation_last_completed_quarter"
+    _attr_icon = "mdi:chart-bell-curve-cumulative"
+
+    @property
+    def native_value(self) -> str | None:
+        evaluation = self.solar.last_temperature_candidate_evaluation
+        return evaluation.get("slot_id") if evaluation else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        evaluation = self.solar.last_temperature_candidate_evaluation
+        if evaluation is None:
+            return {
+                "status": "waiting_for_first_completed_quarter",
+                "candidate_status": self.solar.temperature_candidate_status,
+                "model": SOLAR_TEMPERATURE_CANDIDATE_MODEL,
+                "resolution_minutes": SOLAR_RESOLUTION_MINUTES,
+                "minimum_coverage_percent": SOLAR_MIN_VALID_COVERAGE * 100.0,
+            }
+        return dict(evaluation)
 
 
 class DummyOSSolarDailySensor(DummyOSSolarBaseSensor):
