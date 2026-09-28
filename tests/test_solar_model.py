@@ -87,6 +87,65 @@ class SolarModelTests(unittest.TestCase):
         self.assertEqual(solar_model.split_ac_power(0, 0, 0), (0.0, 0.0))
         self.assertEqual(solar_model.split_ac_power(float("nan"), 1, 1), (None, None))
 
+    def test_temperature_candidate_reference_formula(self) -> None:
+        cell = solar_model.cell_temperature_c(25.0, 1000.0)
+        self.assertEqual(cell, 59.2)
+        factor = solar_model.temperature_factor(cell)
+        self.assertEqual(factor, 0.8632)
+        self.assertEqual(
+            solar_model.temperature_corrected_pv_power_kw(
+                1000.0,
+                25.0,
+                1.0,
+                2.0,
+                1.0,
+            ),
+            0.8632,
+        )
+
+    def test_temperature_candidate_can_gain_in_cold_conditions(self) -> None:
+        cell = solar_model.cell_temperature_c(-10.0, 1000.0)
+        self.assertEqual(cell, 24.2)
+        self.assertEqual(solar_model.temperature_factor(cell), 1.0032)
+
+    def test_temperature_candidate_keeps_existing_ac_cap(self) -> None:
+        self.assertEqual(
+            solar_model.temperature_corrected_pv_power_kw(
+                1200.0,
+                -10.0,
+                2.96,
+                2.45,
+                0.9,
+            ),
+            2.45,
+        )
+
+    def test_invalid_temperature_only_invalidates_candidate(self) -> None:
+        self.assertIsNone(
+            solar_model.temperature_corrected_pv_power_kw(
+                500.0,
+                None,
+                2.96,
+                2.45,
+                0.9,
+            )
+        )
+        # The raw formula remains unchanged and independently valid.
+        self.assertEqual(solar_model.pv_power_kw(500.0, 2.96, 2.45, 0.9), 1.332)
+
+    def test_temperature_helpers_reject_non_finite_inputs(self) -> None:
+        self.assertIsNone(solar_model.cell_temperature_c(float("nan"), 500.0))
+        self.assertIsNone(solar_model.temperature_factor(float("inf")))
+        self.assertIsNone(
+            solar_model.temperature_corrected_pv_power_kw(
+                500.0,
+                float("nan"),
+                2.96,
+                2.45,
+                0.9,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

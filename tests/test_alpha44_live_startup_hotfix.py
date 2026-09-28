@@ -52,9 +52,12 @@ def test_forecast_only_boundary_stays_closed():
         assert marker not in combined
 
 
-def test_alpha44_version_is_consistent():
+def test_alpha44_or_later_version_is_consistent():
     const = _read("custom_components/dummy_os_data/const.py")
     manifest = json.loads(_read("custom_components/dummy_os_data/manifest.json"))
     match = re.search(r'^VERSION = "([^"]+)"$', const, re.MULTILINE)
     assert match is not None
-    assert match.group(1) == manifest["version"] == "0.2.0-alpha.44"
+    assert match.group(1) == manifest["version"]
+    prefix = "0.2.0-alpha."
+    assert manifest["version"].startswith(prefix)
+    assert int(manifest["version"].removeprefix(prefix)) >= 44

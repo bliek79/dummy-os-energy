@@ -45,13 +45,19 @@ from .const import (
 )
 from .solar_evaluation import ROOFS, build_quarter_evaluation
 from .solar_model import (
+    SOLAR_TEMPERATURE_ALPHA_REFERENCE,
+    SOLAR_TEMPERATURE_CELL_STC_C,
+    SOLAR_TEMPERATURE_ROSS_K_REFERENCE,
     backward_average_slot_start,
+    cell_temperature_c,
     floor_slot_start,
     next_complete_slot,
     next_future_slot_index,
     pv_power_kw,
     slot_energy_kwh,
     split_ac_power,
+    temperature_corrected_pv_power_kw,
+    temperature_factor,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,6 +70,7 @@ SOLAR_BUFFER_SLOTS = 4
 SOLAR_REQUEST_EXTRA_SLOTS = 7
 SOLAR_STORAGE_SAVE_DELAY_SECONDS = 30
 SOLAR_HORIZON_HOURS = (1, 6, 24, 48, 72)
+SOLAR_TEMPERATURE_CANDIDATE_MODEL = "open_meteo_gti_temperature_candidate_v0.1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +113,46 @@ class SolarPoint:
         ]
 
 
+@dataclass(frozen=True, slots=True)
+class SolarTemperatureCandidatePoint:
+    """Parallel F1 temperature-corrected Solar candidate point."""
+
+    start: datetime
+    north_kwh: float
+    south_kwh: float
+    total_kwh: float
+    north_kw: float
+    south_kw: float
+    total_kw: float
+    north_irradiance_wm2: float
+    south_irradiance_wm2: float
+    north_ambient_temperature_c: float
+    south_ambient_temperature_c: float
+    north_cell_temperature_c: float
+    south_cell_temperature_c: float
+    north_temperature_factor: float
+    south_temperature_factor: float
+
+    def as_list(self) -> list[int | float]:
+        return [
+            int(self.start.timestamp() * 1000),
+            self.north_kwh,
+            self.south_kwh,
+            self.total_kwh,
+            self.north_kw,
+            self.south_kw,
+            self.total_kw,
+            self.north_irradiance_wm2,
+            self.south_irradiance_wm2,
+            self.north_ambient_temperature_c,
+            self.south_ambient_temperature_c,
+            self.north_cell_temperature_c,
+            self.south_cell_temperature_c,
+            self.north_temperature_factor,
+            self.south_temperature_factor,
+        ]
+
+
 class DummyOSSolarCoordinator:
     """Fetch two roof forecasts and publish one source-neutral solar timeline."""
 
@@ -113,6 +160,10 @@ class DummyOSSolarCoordinator:
         self.hass = hass
         self.entry = entry
         self._source_points: list[SolarPoint] = []
+        self._temperature_candidate_points: list[SolarTemperatureCandidatePoint] = []
+        self.temperature_candidate_last_error: str | None = None
+        self.last_temperature_candidate_evaluation: dict[str, Any] | None = None
+        self._temperature_candidate_snapshot: dict[str, Any] | None = None
         self.last_successful_update: datetime | None = None
         self.last_attempt: datetime | None = None
         self.last_error: str | None = None
@@ -143,6 +194,33 @@ class DummyOSSolarCoordinator:
         local_now = dt_util.as_local(dt_util.utcnow())
         cutoff = dt_util.as_utc(next_complete_slot(local_now, QUARTER_MINUTES))
         return [point for point in self._source_points if point.start >= cutoff][:FORECAST_SLOTS]
+
+    @property
+    def temperature_candidate_points(self) -> list[SolarTemperatureCandidatePoint]:
+        """Return the parallel F1 candidate on the same rolling 72-hour window."""
+        if not self._temperature_candidate_points:
+            return []
+        local_now = dt_util.as_local(dt_util.utcnow())
+        cutoff = dt_util.as_utc(next_complete_slot(local_now, QUARTER_MINUTES))
+        return [
+            point
+            for point in self._temperature_candidate_points
+            if point.start >= cutoff
+        ][:FORECAST_SLOTS]
+
+    @property
+    def temperature_candidate_status(self) -> str:
+        """Return readiness without affecting the raw Solar source status."""
+        return (
+            "ready"
+            if len(self.temperature_candidate_points) == FORECAST_SLOTS
+            else "not_ready"
+        )
+
+    @property
+    def temperature_candidate_source_point_count(self) -> int:
+        """Return retained candidate buffer size."""
+        return len(self._temperature_candidate_points)
 
     @property
     def planner_points(self) -> list[SolarPoint]:
@@ -225,6 +303,12 @@ class DummyOSSolarCoordinator:
         """Load evaluation state, fetch Solar data and start listeners."""
         stored = await self.store.async_load() or {}
         self.last_evaluation = stored.get("last_evaluation")
+        raw_candidate_evaluation = stored.get("last_temperature_candidate_evaluation")
+        self.last_temperature_candidate_evaluation = (
+            raw_candidate_evaluation
+            if isinstance(raw_candidate_evaluation, dict)
+            else None
+        )
         raw_horizon_evaluations = stored.get("last_horizon_evaluations")
         if isinstance(raw_horizon_evaluations, list):
             self.last_horizon_evaluations = [
@@ -322,6 +406,11 @@ class DummyOSSolarCoordinator:
                 if isinstance(stored.get("forecast_snapshot"), dict)
                 else None
             )
+            self._temperature_candidate_snapshot = (
+                stored.get("temperature_candidate_snapshot")
+                if isinstance(stored.get("temperature_candidate_snapshot"), dict)
+                else None
+            )
             for roof in ROOFS:
                 try:
                     self._energy_ws[roof] = max(
@@ -359,6 +448,12 @@ class DummyOSSolarCoordinator:
             self._quarter_start,
             captured_at,
         )
+        self._temperature_candidate_snapshot = (
+            self._temperature_candidate_snapshot_for_slot(
+                self._quarter_start,
+                captured_at,
+            )
+        )
         self._energy_ws = {roof: 0.0 for roof in ROOFS}
         self._covered_seconds = {roof: 0.0 for roof in ROOFS}
         self._last_sample_time = now_utc
@@ -395,6 +490,42 @@ class DummyOSSolarCoordinator:
                 else None
             ),
             "captured_at": captured.isoformat(),
+        }
+
+    def _temperature_candidate_snapshot_for_slot(
+        self,
+        slot_start: datetime,
+        captured_at: datetime,
+    ) -> dict[str, Any] | None:
+        """Freeze the F1 candidate at the identical pre-actual lock time."""
+        point = next(
+            (
+                item
+                for item in self._temperature_candidate_points
+                if item.start == dt_util.as_utc(slot_start)
+            ),
+            None,
+        )
+        captured = dt_util.as_utc(captured_at)
+        if point is None or captured > dt_util.as_utc(slot_start):
+            return None
+        return {
+            "start": point.start.isoformat(),
+            "end": (point.start + timedelta(minutes=QUARTER_MINUTES)).isoformat(),
+            "north_kwh": point.north_kwh,
+            "south_kwh": point.south_kwh,
+            "total_kwh": point.total_kwh,
+            "provider": "open_meteo",
+            "model": SOLAR_TEMPERATURE_CANDIDATE_MODEL,
+            "source_update": (
+                self.last_successful_update.isoformat()
+                if self.last_successful_update
+                else None
+            ),
+            "captured_at": captured.isoformat(),
+            "ross_coefficient": SOLAR_TEMPERATURE_ROSS_K_REFERENCE,
+            "temperature_coefficient_per_c": SOLAR_TEMPERATURE_ALPHA_REFERENCE,
+            "stc_cell_temperature_c": SOLAR_TEMPERATURE_CELL_STC_C,
         }
 
     def _capture_horizon_snapshots(self, captured_at: datetime) -> None:
@@ -468,6 +599,25 @@ class DummyOSSolarCoordinator:
             self._sample_count,
             SOLAR_MIN_VALID_COVERAGE,
         )
+        self.last_temperature_candidate_evaluation = build_quarter_evaluation(
+            self._quarter_start,
+            self._temperature_candidate_snapshot,
+            self._energy_ws,
+            self._covered_seconds,
+            self._sample_count,
+            SOLAR_MIN_VALID_COVERAGE,
+        )
+        self.last_temperature_candidate_evaluation["candidate_model"] = (
+            SOLAR_TEMPERATURE_CANDIDATE_MODEL
+        )
+        self.last_temperature_candidate_evaluation["candidate_status"] = (
+            "locked"
+            if self._temperature_candidate_snapshot is not None
+            else "not_ready"
+        )
+        self.last_temperature_candidate_evaluation["raw_forecast_model"] = (
+            self.last_evaluation.get("forecast_model")
+        )
 
         slot_id = self._quarter_start.isoformat()
         due: list[tuple[str, dict[str, Any]]] = [
@@ -524,6 +674,7 @@ class DummyOSSolarCoordinator:
             active = {
                 "start": self._quarter_start.isoformat(),
                 "forecast_snapshot": self._forecast_snapshot,
+                "temperature_candidate_snapshot": self._temperature_candidate_snapshot,
                 "energy_ws": dict(self._energy_ws),
                 "covered_seconds": dict(self._covered_seconds),
                 "sample_count": self._sample_count,
@@ -531,6 +682,7 @@ class DummyOSSolarCoordinator:
         return {
             "active_quarter": active,
             "last_evaluation": self.last_evaluation,
+            "last_temperature_candidate_evaluation": self.last_temperature_candidate_evaluation,
             "last_horizon_evaluations": self.last_horizon_evaluations,
             "horizon_snapshots": self._horizon_snapshots,
         }
@@ -565,7 +717,7 @@ class DummyOSSolarCoordinator:
         params = {
             "latitude": self.latitude,
             "longitude": self.longitude,
-            "minutely_15": "global_tilted_irradiance",
+            "minutely_15": "temperature_2m,global_tilted_irradiance",
             # Extra stamps cover backward-average alignment plus four rolling
             # quarter advances until the next hourly refresh.
             "forecast_minutely_15": FORECAST_SLOTS + SOLAR_REQUEST_EXTRA_SLOTS,
@@ -604,7 +756,104 @@ class DummyOSSolarCoordinator:
                 f"Open-Meteo solar produced {len(points)} aligned slots; "
                 f"expected at least {FORECAST_SLOTS}"
             )
+
+        # Raw remains authoritative. Publish it before attempting the optional
+        # F1 candidate so bad/missing temperature data cannot regress raw.
         self._source_points = points
+
+        try:
+            north_temperatures = self._normalize_interval_temperature(
+                north_payload,
+                cutoff_utc,
+            )
+            south_temperatures = self._normalize_interval_temperature(
+                south_payload,
+                cutoff_utc,
+            )
+            raw_starts = set(north_values)
+            if (
+                set(north_temperatures) != raw_starts
+                or set(south_temperatures) != raw_starts
+            ):
+                raise ValueError(
+                    "Temperature candidate timeline does not align with raw GTI"
+                )
+
+            candidate_points: list[SolarTemperatureCandidatePoint] = []
+            for start in sorted(north_values):
+                north_irradiance = north_values[start]
+                south_irradiance = south_values[start]
+                north_ambient = north_temperatures[start]
+                south_ambient = south_temperatures[start]
+                north_cell = cell_temperature_c(
+                    north_ambient,
+                    north_irradiance,
+                )
+                south_cell = cell_temperature_c(
+                    south_ambient,
+                    south_irradiance,
+                )
+                north_temp_factor = temperature_factor(north_cell)
+                south_temp_factor = temperature_factor(south_cell)
+                north_kw = temperature_corrected_pv_power_kw(
+                    north_irradiance,
+                    north_ambient,
+                    self.north.dc_capacity_kwp,
+                    self.north.ac_limit_kw,
+                    self.north.performance_factor,
+                )
+                south_kw = temperature_corrected_pv_power_kw(
+                    south_irradiance,
+                    south_ambient,
+                    self.south.dc_capacity_kwp,
+                    self.south.ac_limit_kw,
+                    self.south.performance_factor,
+                )
+                if None in (
+                    north_cell,
+                    south_cell,
+                    north_temp_factor,
+                    south_temp_factor,
+                    north_kw,
+                    south_kw,
+                ):
+                    raise ValueError(
+                        f"Invalid temperature candidate inputs at {start.isoformat()}"
+                    )
+                north_kwh = slot_energy_kwh(north_kw)
+                south_kwh = slot_energy_kwh(south_kw)
+                candidate_points.append(
+                    SolarTemperatureCandidatePoint(
+                        start=start,
+                        north_kwh=north_kwh,
+                        south_kwh=south_kwh,
+                        total_kwh=round(north_kwh + south_kwh, 6),
+                        north_kw=north_kw,
+                        south_kw=south_kw,
+                        total_kw=round(north_kw + south_kw, 6),
+                        north_irradiance_wm2=north_irradiance,
+                        south_irradiance_wm2=south_irradiance,
+                        north_ambient_temperature_c=north_ambient,
+                        south_ambient_temperature_c=south_ambient,
+                        north_cell_temperature_c=north_cell,
+                        south_cell_temperature_c=south_cell,
+                        north_temperature_factor=north_temp_factor,
+                        south_temperature_factor=south_temp_factor,
+                    )
+                )
+            if len(candidate_points) < FORECAST_SLOTS:
+                raise ValueError(
+                    f"Temperature candidate produced {len(candidate_points)} aligned slots; "
+                    f"expected at least {FORECAST_SLOTS}"
+                )
+            self._temperature_candidate_points = candidate_points
+            self.temperature_candidate_last_error = None
+        except (ValueError, TypeError, KeyError) as err:
+            self._temperature_candidate_points = []
+            self.temperature_candidate_last_error = (
+                f"{type(err).__name__}: {err}"
+            )
+
         self.source_generation_time_ms = {
             "north": self._as_float(north_payload.get("generationtime_ms")),
             "south": self._as_float(south_payload.get("generationtime_ms")),
@@ -647,6 +896,52 @@ class DummyOSSolarCoordinator:
                 result[slot_start_utc] = max(0.0, irradiance)
             except (TypeError, ValueError):
                 raise ValueError(f"Invalid irradiance at {raw_time}") from None
+            if len(result) >= FORECAST_SLOTS + SOLAR_BUFFER_SLOTS:
+                break
+        return result
+
+    @staticmethod
+    def _normalize_interval_temperature(
+        payload: dict[str, Any],
+        cutoff_utc: datetime,
+    ) -> dict[datetime, float]:
+        """Map boundary temperatures to interval-average 15-minute slots."""
+        minutely = payload.get("minutely_15")
+        if not isinstance(minutely, dict):
+            raise ValueError("Open-Meteo response missing minutely_15")
+        times = minutely.get("time")
+        temperatures = minutely.get("temperature_2m")
+        if not isinstance(times, list) or not isinstance(temperatures, list):
+            raise ValueError("Open-Meteo response missing temperature time axis")
+
+        timezone = ZoneInfo(str(payload.get("timezone") or OPEN_METEO_SOLAR_TIMEZONE))
+        result: dict[datetime, float] = {}
+        for index in range(1, len(times)):
+            raw_time = times[index]
+            if (
+                index >= len(temperatures)
+                or not isinstance(raw_time, str)
+                or temperatures[index - 1] is None
+                or temperatures[index] is None
+            ):
+                continue
+            local_dt = datetime.fromisoformat(raw_time)
+            if local_dt.tzinfo is None:
+                local_dt = local_dt.replace(tzinfo=timezone)
+            slot_start_utc = backward_average_slot_start(
+                local_dt.astimezone(dt_util.UTC),
+                SOLAR_RESOLUTION_MINUTES,
+            )
+            if slot_start_utc < cutoff_utc:
+                continue
+            try:
+                previous = float(temperatures[index - 1])
+                current = float(temperatures[index])
+                if not all(math.isfinite(value) for value in (previous, current)):
+                    raise ValueError
+                result[slot_start_utc] = round((previous + current) / 2.0, 6)
+            except (TypeError, ValueError):
+                continue
             if len(result) >= FORECAST_SLOTS + SOLAR_BUFFER_SLOTS:
                 break
         return result
@@ -705,6 +1000,22 @@ class DummyOSSolarCoordinator:
             QUARTER_MINUTES,
         )
         return self.points[index] if index is not None else None
+
+    def temperature_candidate_next_quarter_point(
+        self,
+        now_utc: datetime | None = None,
+    ) -> SolarTemperatureCandidatePoint | None:
+        """Return the first F1 candidate slot strictly after the current quarter."""
+        points = self.temperature_candidate_points
+        if not points:
+            return None
+        reference = dt_util.as_utc(now_utc or dt_util.utcnow())
+        index = next_future_slot_index(
+            [point.start for point in points],
+            reference,
+            QUARTER_MINUTES,
+        )
+        return points[index] if index is not None else None
 
     @property
     def age_minutes(self) -> float | None:

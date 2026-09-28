@@ -10,6 +10,7 @@ on:
       - 'RELEASE_NOTES*.md'
       - '.github/workflows/validate-forecast-only.yml'
       - '.github/workflows/publish-alpha44.yml'
+      - '.github/workflows/publish-alpha45.yml'
 
 permissions:
   contents: read
@@ -57,7 +58,7 @@ jobs:
               and any(isinstance(t, ast.Name) and t.id == 'VERSION' for t in n.targets)
           )
           manifest = json.loads((root/'manifest.json').read_text())
-          assert version == manifest['version'] == '0.2.0-alpha.44'
+          assert version == manifest['version'] == '0.2.0-alpha.45'
           assert 'PLATFORMS = ["sensor", "select"]' in (root/'const.py').read_text()
           sensor = (root/'sensor.py').read_text()
           home = (root/'home_input_sensor.py').read_text()
