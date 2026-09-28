@@ -7,6 +7,103 @@ import math
 from typing import Sequence
 
 
+# F1 Energy Solar temperature-candidate reference parameters.
+# These are explicit observer/candidate parameters derived from the physical
+# Ross-model reference documented in the Solar Forecast optimisation workdoc.
+# They are not promoted DOEMS defaults and must remain visible in diagnostics.
+SOLAR_TEMPERATURE_ROSS_K_REFERENCE = 0.0342  # degC per W/m2
+SOLAR_TEMPERATURE_ALPHA_REFERENCE = -0.004  # 1/degC
+SOLAR_TEMPERATURE_CELL_STC_C = 25.0
+SOLAR_IRRADIANCE_STC_WM2 = 1000.0
+
+
+def cell_temperature_c(
+    ambient_temperature_c: float | int | None,
+    irradiance_wm2: float | int | None,
+    ross_coefficient: float = SOLAR_TEMPERATURE_ROSS_K_REFERENCE,
+) -> float | None:
+    """Estimate PV cell temperature with the Ross reference model."""
+    try:
+        ambient = float(ambient_temperature_c)
+        irradiance = float(irradiance_wm2)
+        coefficient = float(ross_coefficient)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (ambient, irradiance, coefficient)):
+        return None
+    if coefficient < 0.0:
+        return None
+    irradiance = max(0.0, irradiance)
+    return round(ambient + irradiance * coefficient, 6)
+
+
+def temperature_factor(
+    cell_temperature: float | int | None,
+    alpha_per_c: float = SOLAR_TEMPERATURE_ALPHA_REFERENCE,
+    stc_cell_temperature_c: float = SOLAR_TEMPERATURE_CELL_STC_C,
+) -> float | None:
+    """Return the non-negative PV power multiplier for cell temperature."""
+    try:
+        cell = float(cell_temperature)
+        alpha = float(alpha_per_c)
+        stc_cell = float(stc_cell_temperature_c)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (cell, alpha, stc_cell)):
+        return None
+    return round(max(0.0, 1.0 + alpha * (cell - stc_cell)), 6)
+
+
+def temperature_corrected_pv_power_kw(
+    irradiance_wm2: float | int | None,
+    ambient_temperature_c: float | int | None,
+    dc_capacity_kwp: float,
+    ac_limit_kw: float,
+    performance_factor: float,
+    ross_coefficient: float = SOLAR_TEMPERATURE_ROSS_K_REFERENCE,
+    alpha_per_c: float = SOLAR_TEMPERATURE_ALPHA_REFERENCE,
+    stc_cell_temperature_c: float = SOLAR_TEMPERATURE_CELL_STC_C,
+    irradiance_stc_wm2: float = SOLAR_IRRADIANCE_STC_WM2,
+) -> float | None:
+    """Return F1 temperature-candidate power using the existing Energy AC cap."""
+    try:
+        irradiance = float(irradiance_wm2)
+        dc_capacity = float(dc_capacity_kwp)
+        ac_limit = float(ac_limit_kw)
+        performance = float(performance_factor)
+        irradiance_stc = float(irradiance_stc_wm2)
+    except (TypeError, ValueError):
+        return None
+    if not all(
+        math.isfinite(value)
+        for value in (irradiance, dc_capacity, ac_limit, performance, irradiance_stc)
+    ):
+        return None
+    if irradiance_stc <= 0.0:
+        return None
+
+    irradiance = max(0.0, irradiance)
+    dc_capacity = max(0.0, dc_capacity)
+    ac_limit = max(0.0, ac_limit)
+    performance = max(0.0, performance)
+    cell = cell_temperature_c(
+        ambient_temperature_c,
+        irradiance,
+        ross_coefficient,
+    )
+    factor = temperature_factor(cell, alpha_per_c, stc_cell_temperature_c)
+    if cell is None or factor is None:
+        return None
+
+    uncapped_kw = (
+        dc_capacity
+        * (irradiance / irradiance_stc)
+        * factor
+        * performance
+    )
+    return round(min(ac_limit, max(0.0, uncapped_kw)), 6)
+
+
 def pv_power_kw(
     irradiance_wm2: float | int | None,
     dc_capacity_kwp: float,
