@@ -120,7 +120,7 @@ class DummyOSSolarStatusSensor(DummyOSSolarBaseSensor):
             "temperature_candidate_status": self.solar.temperature_candidate_status,
             "temperature_candidate_point_count": len(self.solar.temperature_candidate_points),
             "temperature_candidate_last_error": self.solar.temperature_candidate_last_error,
-            "mode": "observation_shadow",
+            "mode": "observation_parallel",
         }
 
 
@@ -484,5 +484,5 @@ class DummyOSSolarModelSensor(DummyOSSolarBaseSensor):
             "calculation": "gti/1000 x dc_kwp x performance_factor; capped per roof at ac_limit_kw",
             "actual_energy_calculation": "zero-order-hold integration of total AC; north/south split by SMA DC input ratio",
             "evaluation": "forecast frozen at slot start and compared after a completed quarter with at least 90% coverage",
-            "mode": "observation_shadow",
+            "mode": "observation_parallel",
         }
