@@ -23,6 +23,9 @@ SOLAR_GENERATED_ENTITY_ID_ALIASES: dict[str, str] = {
     "do_solar_evaluation_horizon_48h": "sensor.dummy_os_solar_evaluation_horizon_48h",
     "do_solar_evaluation_horizon_72h": "sensor.dummy_os_solar_evaluation_horizon_72h",
     "do_solar_model": "sensor.dummy_os_solar_forecast_model",
+    "do_solar_temperature_candidate_timeline": "sensor.dummy_os_energy_do_solar_temperature_candidate_timeline",
+    "do_solar_temperature_candidate_next_quarter": "sensor.dummy_os_energy_do_solar_temperature_candidate_next_quarter",
+    "do_solar_temperature_candidate_evaluation_last_completed_quarter": "sensor.dummy_os_energy_do_solar_temperature_candidate_evaluation_last_completed_quarter",
 }
 
 DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES: dict[str, str] = {
