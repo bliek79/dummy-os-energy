@@ -209,8 +209,6 @@ def _component_summary(days: list[Mapping[str, Any]], roof: str) -> dict[str, An
         "candidate_signed_error_kwh": round(candidate_error, 6),
         "raw_absolute_error_kwh": round(raw_abs, 6),
         "candidate_absolute_error_kwh": round(candidate_abs, 6),
-        "raw_mae_kwh": round(raw_abs / sample_count, 6) if sample_count else None,
-        "candidate_mae_kwh": round(candidate_abs / sample_count, 6) if sample_count else None,
         "raw_bias_percent": round(100.0 * raw_error / actual, 2) if denominator_ok else None,
         "candidate_bias_percent": round(100.0 * candidate_error / actual, 2) if denominator_ok else None,
         "raw_wape_percent": round(100.0 * raw_abs / actual, 2) if denominator_ok else None,
