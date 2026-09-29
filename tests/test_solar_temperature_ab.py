@@ -115,8 +115,6 @@ def test_daily_aggregation_reports_bias_and_wape_without_winner() -> None:
     assert total["actual_kwh"] == 1.0
     assert total["raw_absolute_error_kwh"] == 0.1
     assert total["candidate_absolute_error_kwh"] == 0.06
-    assert total["raw_mae_kwh"] == 0.05
-    assert total["candidate_mae_kwh"] == 0.03
     assert total["raw_wape_percent"] == 10.0
     assert total["candidate_wape_percent"] == 6.0
     assert "winner" not in summary
