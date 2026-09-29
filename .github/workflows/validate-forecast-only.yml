@@ -12,6 +12,7 @@ on:
       - '.github/workflows/publish-alpha44.yml'
       - '.github/workflows/publish-alpha45.yml'
       - '.github/workflows/publish-alpha46.yml'
+      - '.github/workflows/publish-alpha47.yml'
 
 permissions:
   contents: read
@@ -37,6 +38,7 @@ jobs:
             tests/test_forecast_only_scope.py \
             tests/test_alpha44_live_startup_hotfix.py \
             tests/test_solar_temperature_candidate.py \
+            tests/test_solar_temperature_ab.py \
             tests/test_alpha30_startup_performance.py \
             tests/test_alpha29_price_buffer.py \
             tests/test_energy_profile_contract_step9.py \
@@ -60,7 +62,7 @@ jobs:
               and any(isinstance(t, ast.Name) and t.id == 'VERSION' for t in n.targets)
           )
           manifest = json.loads((root/'manifest.json').read_text())
-          assert version == manifest['version'] == '0.2.0-alpha.46'
+          assert version == manifest['version'] == '0.2.0-alpha.47'
           assert 'PLATFORMS = ["sensor", "select"]' in (root/'const.py').read_text()
           sensor = (root/'sensor.py').read_text()
           home = (root/'home_input_sensor.py').read_text()
