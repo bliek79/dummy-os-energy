@@ -86,3 +86,23 @@ def test_candidate_diagnostics_expose_reference_parameters() -> None:
         "parallel_observer",
     ):
         assert marker in source
+
+
+def test_candidate_entities_have_canonical_migration_routes() -> None:
+    init_source = (ROOT / "custom_components" / "dummy_os_data" / "__init__.py").read_text(encoding="utf-8")
+    migration_source = (ROOT / "custom_components" / "dummy_os_data" / "entity_migrations.py").read_text(encoding="utf-8")
+    expected = {
+        "do_solar_temperature_candidate_timeline": "sensor.do_solar_temperature_candidate_timeline",
+        "do_solar_temperature_candidate_next_quarter": "sensor.do_solar_temperature_candidate_next_quarter",
+        "do_solar_temperature_candidate_evaluation_last_completed_quarter": "sensor.do_solar_temperature_candidate_evaluation_last_completed_quarter",
+    }
+    for unique_id, entity_id in expected.items():
+        assert f'("sensor", "{unique_id}", "{entity_id}")' in init_source
+        generated = f"sensor.dummy_os_energy_{unique_id}"
+        assert f'"{unique_id}": "{generated}"' in migration_source
+
+
+def test_candidate_status_uses_parallel_not_shadow_semantics() -> None:
+    source = _sensor_source()
+    assert '"mode": "observation_parallel"' in source
+    assert '"mode": "observation_shadow"' not in source
