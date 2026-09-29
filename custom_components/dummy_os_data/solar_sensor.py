@@ -120,7 +120,7 @@ class DummyOSSolarStatusSensor(DummyOSSolarBaseSensor):
             "temperature_candidate_status": self.solar.temperature_candidate_status,
             "temperature_candidate_point_count": len(self.solar.temperature_candidate_points),
             "temperature_candidate_last_error": self.solar.temperature_candidate_last_error,
-            "mode": "observation_shadow",
+            "mode": "observation_parallel",
         }
 
 
