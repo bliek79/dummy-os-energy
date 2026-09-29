@@ -34,6 +34,7 @@ def build_solar_sensors(coordinator) -> list[SensorEntity]:
         DummyOSSolarTemperatureCandidateTimelineSensor(coordinator),
         DummyOSSolarTemperatureCandidateNextQuarterSensor(coordinator),
         DummyOSSolarTemperatureCandidateLastCompletedQuarterSensor(coordinator),
+        DummyOSSolarTemperatureABValidationSensor(coordinator),
         DummyOSSolarDailySensor(coordinator, "today", "north"),
         DummyOSSolarDailySensor(coordinator, "today", "south"),
         DummyOSSolarDailySensor(coordinator, "today", "total"),
@@ -274,6 +275,44 @@ class DummyOSSolarTemperatureCandidateLastCompletedQuarterSensor(DummyOSSolarBas
                 "minimum_coverage_percent": SOLAR_MIN_VALID_COVERAGE * 100.0,
             }
         return dict(evaluation)
+
+
+class DummyOSSolarTemperatureABValidationSensor(DummyOSSolarBaseSensor):
+    """Expose persistent F2 raw-versus-temperature-candidate validation."""
+
+    _attr_name = "DO Solar Temperature A/B Validation"
+    _attr_unique_id = "do_solar_temperature_ab_validation"
+    _attr_suggested_object_id = "do_solar_temperature_ab_validation"
+    _attr_icon = "mdi:compare-horizontal"
+    _unrecorded_attributes = frozenset({"recent_days"})
+
+    @property
+    def native_value(self) -> int:
+        summary = self.solar.temperature_ab_validation_summary
+        return int(summary.get("sample_count", 0))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        summary = self.solar.temperature_ab_validation_summary
+        return {
+            "phase": "F2",
+            "role": "ab_validation",
+            "status": summary.get("status"),
+            "sample_count": summary.get("sample_count"),
+            "day_count": summary.get("day_count"),
+            "first_date": summary.get("first_date"),
+            "last_date": summary.get("last_date"),
+            "last_pair_status": summary.get("last_pair_status"),
+            "last_slot_id": summary.get("last_slot_id"),
+            "raw_model": OPEN_METEO_SOLAR_MODEL,
+            "candidate_model": SOLAR_TEMPERATURE_CANDIDATE_MODEL,
+            "minimum_coverage_percent": SOLAR_MIN_VALID_COVERAGE * 100.0,
+            "metrics": summary.get("components"),
+            "temperature_range": summary.get("temperature_range"),
+            "recent_days": summary.get("recent_days"),
+            "promotion_authority": False,
+            "scope": "F2 exact-lock temperature A/B validation only",
+        }
 
 
 class DummyOSSolarDailySensor(DummyOSSolarBaseSensor):
