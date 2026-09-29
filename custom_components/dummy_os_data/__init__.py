@@ -120,6 +120,7 @@ _ENTITY_ID_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("sensor", "do_solar_temperature_candidate_timeline", "sensor.do_solar_temperature_candidate_timeline"),
     ("sensor", "do_solar_temperature_candidate_next_quarter", "sensor.do_solar_temperature_candidate_next_quarter"),
     ("sensor", "do_solar_temperature_candidate_evaluation_last_completed_quarter", "sensor.do_solar_temperature_candidate_evaluation_last_completed_quarter"),
+    ("sensor", "do_solar_temperature_ab_validation", "sensor.do_solar_temperature_ab_validation"),
     ("sensor", "do_energy_forecast_quality_by_daypart", "sensor.do_energy_forecast_quality_by_daypart"),
     ("sensor", "do_energy_forecast_quality_by_day_type", "sensor.do_energy_forecast_quality_by_day_type"),
     ("sensor", "do_energy_forecast_quality_by_day_type_and_daypart", "sensor.do_energy_forecast_quality_by_day_type_and_daypart"),

@@ -38,12 +38,19 @@ from .const import (
     DEFAULT_SOLAR_ACTUAL_SOUTH_DC_ENTITY,
     DEFAULT_SOLAR_ACTUAL_TOTAL_ENTITY,
     FORECAST_SLOTS,
+    MAX_HISTORY_DAYS,
     QUARTER_MINUTES,
     SOLAR_MIN_VALID_COVERAGE,
     SOLAR_STORAGE_KEY,
     SOLAR_STORAGE_VERSION,
 )
 from .solar_evaluation import ROOFS, build_quarter_evaluation
+from .solar_temperature_ab import (
+    add_temperature_ab_sample,
+    build_temperature_ab_pair,
+    new_temperature_ab_day,
+    summarize_temperature_ab_history,
+)
 from .solar_model import (
     SOLAR_TEMPERATURE_ALPHA_REFERENCE,
     SOLAR_TEMPERATURE_CELL_STC_C,
@@ -164,6 +171,9 @@ class DummyOSSolarCoordinator:
         self.temperature_candidate_last_error: str | None = None
         self.last_temperature_candidate_evaluation: dict[str, Any] | None = None
         self._temperature_candidate_snapshot: dict[str, Any] | None = None
+        self.temperature_ab_history: list[dict[str, Any]] = []
+        self.temperature_ab_last_pair_status = "waiting"
+        self.temperature_ab_last_slot_id: str | None = None
         self.last_successful_update: datetime | None = None
         self.last_attempt: datetime | None = None
         self.last_error: str | None = None
@@ -309,6 +319,23 @@ class DummyOSSolarCoordinator:
             if isinstance(raw_candidate_evaluation, dict)
             else None
         )
+        raw_temperature_ab_history = stored.get("temperature_ab_history")
+        if isinstance(raw_temperature_ab_history, list):
+            self.temperature_ab_history = sorted(
+                [
+                    item
+                    for item in raw_temperature_ab_history
+                    if isinstance(item, dict) and isinstance(item.get("date"), str)
+                ],
+                key=lambda item: str(item.get("date")),
+            )[-MAX_HISTORY_DAYS:]
+        raw_pair_status = stored.get("temperature_ab_last_pair_status")
+        if isinstance(raw_pair_status, str):
+            self.temperature_ab_last_pair_status = raw_pair_status
+        raw_pair_slot = stored.get("temperature_ab_last_slot_id")
+        if isinstance(raw_pair_slot, str):
+            self.temperature_ab_last_slot_id = raw_pair_slot
+
         raw_horizon_evaluations = stored.get("last_horizon_evaluations")
         if isinstance(raw_horizon_evaluations, list):
             self.last_horizon_evaluations = [
@@ -526,6 +553,12 @@ class DummyOSSolarCoordinator:
             "ross_coefficient": SOLAR_TEMPERATURE_ROSS_K_REFERENCE,
             "temperature_coefficient_per_c": SOLAR_TEMPERATURE_ALPHA_REFERENCE,
             "stc_cell_temperature_c": SOLAR_TEMPERATURE_CELL_STC_C,
+            "north_ambient_temperature_c": point.north_ambient_temperature_c,
+            "south_ambient_temperature_c": point.south_ambient_temperature_c,
+            "north_cell_temperature_c": point.north_cell_temperature_c,
+            "south_cell_temperature_c": point.south_cell_temperature_c,
+            "north_temperature_factor": point.north_temperature_factor,
+            "south_temperature_factor": point.south_temperature_factor,
         }
 
     def _capture_horizon_snapshots(self, captured_at: datetime) -> None:
@@ -618,6 +651,19 @@ class DummyOSSolarCoordinator:
         self.last_temperature_candidate_evaluation["raw_forecast_model"] = (
             self.last_evaluation.get("forecast_model")
         )
+        if self._temperature_candidate_snapshot is not None:
+            for field in (
+                "north_ambient_temperature_c",
+                "south_ambient_temperature_c",
+                "north_cell_temperature_c",
+                "south_cell_temperature_c",
+                "north_temperature_factor",
+                "south_temperature_factor",
+            ):
+                self.last_temperature_candidate_evaluation[field] = (
+                    self._temperature_candidate_snapshot.get(field)
+                )
+        self._record_temperature_ab_validation()
 
         slot_id = self._quarter_start.isoformat()
         due: list[tuple[str, dict[str, Any]]] = [
@@ -667,6 +713,59 @@ class DummyOSSolarCoordinator:
             ):
                 self.last_evaluation[prefix + field] = evaluation.get(field)
 
+    def _record_temperature_ab_validation(self) -> None:
+        """Persist one exact-lock F2 raw/candidate A/B sample when valid."""
+        status, sample = build_temperature_ab_pair(
+            self.last_evaluation,
+            self.last_temperature_candidate_evaluation,
+        )
+        self.temperature_ab_last_pair_status = status
+        if status != "ok" or sample is None or self._quarter_start is None:
+            return
+
+        slot_id = str(sample["slot_id"])
+        if slot_id == self.temperature_ab_last_slot_id:
+            return
+        if self.temperature_ab_last_slot_id is not None:
+            try:
+                current_slot = datetime.fromisoformat(slot_id)
+                previous_slot = datetime.fromisoformat(self.temperature_ab_last_slot_id)
+                if current_slot <= previous_slot:
+                    return
+            except ValueError:
+                return
+
+        date_key = dt_util.as_local(self._quarter_start).date().isoformat()
+        day = next(
+            (
+                item
+                for item in self.temperature_ab_history
+                if item.get("date") == date_key
+            ),
+            None,
+        )
+        if day is None:
+            day = new_temperature_ab_day(date_key)
+            self.temperature_ab_history.append(day)
+        add_temperature_ab_sample(day, sample)
+        self.temperature_ab_history.sort(key=lambda item: str(item.get("date")))
+        self.temperature_ab_history = self.temperature_ab_history[-MAX_HISTORY_DAYS:]
+        self.temperature_ab_last_slot_id = slot_id
+
+    @property
+    def temperature_ab_validation_summary(self) -> dict[str, Any]:
+        """Return compact F2 validation evidence without promotion logic."""
+        summary = summarize_temperature_ab_history(self.temperature_ab_history)
+        summary["status"] = (
+            "collecting"
+            if int(summary.get("sample_count", 0)) > 0
+            else "waiting_for_valid_pair"
+        )
+        summary["phase"] = "F2"
+        summary["last_pair_status"] = self.temperature_ab_last_pair_status
+        summary["last_slot_id"] = self.temperature_ab_last_slot_id
+        return summary
+
     def _storage_data(self) -> dict[str, Any]:
         """Return compact JSON-safe evaluation state."""
         active = None
@@ -683,6 +782,9 @@ class DummyOSSolarCoordinator:
             "active_quarter": active,
             "last_evaluation": self.last_evaluation,
             "last_temperature_candidate_evaluation": self.last_temperature_candidate_evaluation,
+            "temperature_ab_history": self.temperature_ab_history,
+            "temperature_ab_last_pair_status": self.temperature_ab_last_pair_status,
+            "temperature_ab_last_slot_id": self.temperature_ab_last_slot_id,
             "last_horizon_evaluations": self.last_horizon_evaluations,
             "horizon_snapshots": self._horizon_snapshots,
         }
