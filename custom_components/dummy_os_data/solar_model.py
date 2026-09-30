@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 import math
-from typing import Sequence
+from typing import Any, Sequence
 
 
 # F1 Energy Solar temperature-candidate reference parameters.
@@ -15,6 +16,121 @@ SOLAR_TEMPERATURE_ROSS_K_REFERENCE = 0.0342  # degC per W/m2
 SOLAR_TEMPERATURE_ALPHA_REFERENCE = -0.004  # 1/degC
 SOLAR_TEMPERATURE_CELL_STC_C = 25.0
 SOLAR_IRRADIANCE_STC_WM2 = 1000.0
+
+
+def parse_horizon_profile(
+    value: str | Sequence[Sequence[float | int]] | None,
+) -> tuple[tuple[float, float], ...] | None:
+    """Parse and validate one physical horizon profile.
+
+    The F3 contract uses compass azimuth (0=N, 90=E, 180=S, 270=W,
+    360=N) and requires explicit 0/360 wrap points with equal elevation.
+    Empty input is allowed at configuration level and means that the F3
+    candidate is not ready; it is never replaced by a learned/default curve.
+    """
+    if value is None:
+        return None
+    raw: Any = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text == "[]":
+            return None
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError as err:
+            raise ValueError("horizon profile must be valid JSON") from err
+    if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+        raise ValueError("horizon profile must contain at least two points")
+
+    points: list[tuple[float, float]] = []
+    previous_azimuth: float | None = None
+    for point in raw:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            raise ValueError("each horizon point must be [azimuth_deg, elevation_deg]")
+        try:
+            azimuth = float(point[0])
+            elevation = float(point[1])
+        except (TypeError, ValueError) as err:
+            raise ValueError("horizon profile values must be numeric") from err
+        if not math.isfinite(azimuth) or not math.isfinite(elevation):
+            raise ValueError("horizon profile values must be finite")
+        if not 0.0 <= azimuth <= 360.0:
+            raise ValueError("horizon azimuth must be within 0..360 degrees")
+        if not -90.0 <= elevation <= 90.0:
+            raise ValueError("horizon elevation must be within -90..90 degrees")
+        if previous_azimuth is not None and azimuth <= previous_azimuth:
+            raise ValueError("horizon azimuths must be strictly increasing")
+        points.append((round(azimuth, 6), round(elevation, 6)))
+        previous_azimuth = azimuth
+
+    if not math.isclose(points[0][0], 0.0, abs_tol=1e-9):
+        raise ValueError("horizon profile must start at azimuth 0")
+    if not math.isclose(points[-1][0], 360.0, abs_tol=1e-9):
+        raise ValueError("horizon profile must end at azimuth 360")
+    if not math.isclose(points[0][1], points[-1][1], abs_tol=1e-6):
+        raise ValueError("horizon elevations at azimuth 0 and 360 must match")
+    return tuple(points)
+
+
+def interpolate_horizon_elevation_deg(
+    profile: Sequence[Sequence[float | int]] | None,
+    azimuth_deg: float | int | None,
+) -> float | None:
+    """Linearly interpolate physical horizon elevation at compass azimuth."""
+    if profile is None:
+        return None
+    try:
+        azimuth = float(azimuth_deg)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(azimuth):
+        return None
+    parsed = parse_horizon_profile(profile)
+    if parsed is None:
+        return None
+    if math.isclose(azimuth, 360.0, abs_tol=1e-9):
+        normalized = 360.0
+    else:
+        normalized = azimuth % 360.0
+    for index in range(1, len(parsed)):
+        left_azimuth, left_elevation = parsed[index - 1]
+        right_azimuth, right_elevation = parsed[index]
+        if normalized <= right_azimuth:
+            span = right_azimuth - left_azimuth
+            if span <= 0.0:
+                return None
+            ratio = (normalized - left_azimuth) / span
+            return round(left_elevation + ratio * (right_elevation - left_elevation), 6)
+    return round(parsed[-1][1], 6)
+
+
+def horizon_effective_irradiance_wm2(
+    gti_wm2: float | int | None,
+    diffuse_radiation_wm2: float | int | None,
+    solar_elevation_deg: float | int | None,
+    local_horizon_elevation_deg: float | int | None,
+) -> tuple[float | None, bool | None]:
+    """Apply the F3 simple physical horizon rule.
+
+    When the solar elevation is below the local physical horizon, direct
+    sunlight is treated as blocked and effective irradiance is the Open-Meteo
+    diffuse_radiation contribution. Otherwise GTI remains authoritative.
+    """
+    try:
+        gti = float(gti_wm2)
+        diffuse = float(diffuse_radiation_wm2)
+        solar_elevation = float(solar_elevation_deg)
+        horizon_elevation = float(local_horizon_elevation_deg)
+    except (TypeError, ValueError):
+        return None, None
+    if not all(
+        math.isfinite(value)
+        for value in (gti, diffuse, solar_elevation, horizon_elevation)
+    ):
+        return None, None
+    blocked = solar_elevation < horizon_elevation
+    effective = max(0.0, diffuse if blocked else gti)
+    return round(effective, 6), blocked
 
 
 def cell_temperature_c(
