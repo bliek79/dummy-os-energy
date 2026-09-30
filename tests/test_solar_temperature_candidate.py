@@ -32,11 +32,11 @@ def test_raw_model_and_native_contract_remain_present() -> None:
     assert "self._source_points = points" in source
 
 
-def test_open_meteo_request_adds_temperature_without_direct_diffuse() -> None:
+def test_open_meteo_request_keeps_f1_temperature_when_f3_inputs_are_added() -> None:
     source = _solar_source()
-    assert '"minutely_15": "temperature_2m,global_tilted_irradiance"' in source
-    assert "diffuse_radiation" not in source
-    assert "direct_radiation" not in source
+    assert '"minutely_15": "temperature_2m,global_tilted_irradiance,direct_radiation,diffuse_radiation"' in source
+    assert "self._temperature_candidate_points = candidate_points" in source
+    assert "temperature_corrected_pv_power_kw(" in source
 
 
 def test_interval_average_temperature_uses_adjacent_boundaries() -> None:
