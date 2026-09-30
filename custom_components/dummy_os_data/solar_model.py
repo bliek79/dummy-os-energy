@@ -104,6 +104,75 @@ def interpolate_horizon_elevation_deg(
     return round(parsed[-1][1], 6)
 
 
+def solar_position_degrees(
+    timestamp: datetime,
+    latitude_deg: float | int,
+    longitude_deg: float | int,
+) -> tuple[float | None, float | None]:
+    """Return deterministic compass azimuth and solar elevation in degrees.
+
+    F3 evaluates geometry at the Open-Meteo backward-average source stamp,
+    i.e. slot_start + 15 minutes. This pure implementation uses standard
+    solar-coordinate equations and requires a timezone-aware timestamp.
+    """
+    if timestamp.tzinfo is None:
+        return None, None
+    try:
+        latitude = float(latitude_deg)
+        longitude = float(longitude_deg)
+    except (TypeError, ValueError):
+        return None, None
+    if not all(math.isfinite(v) for v in (latitude, longitude)):
+        return None, None
+    if not -90.0 <= latitude <= 90.0 or not -180.0 <= longitude <= 180.0:
+        return None, None
+
+    utc = timestamp.astimezone(timezone.utc)
+    # Days since J2000.0 (2000-01-01 12:00 UTC).
+    days = utc.timestamp() / 86400.0 - 10957.5
+    mean_anomaly = math.radians((357.5291 + 0.98560028 * days) % 360.0)
+    ecliptic_longitude = math.radians(
+        (
+            math.degrees(mean_anomaly)
+            + 1.9148 * math.sin(mean_anomaly)
+            + 0.0200 * math.sin(2.0 * mean_anomaly)
+            + 102.9372
+            + 180.0
+        )
+        % 360.0
+    )
+    obliquity = math.radians(23.4397)
+    right_ascension = math.atan2(
+        math.sin(ecliptic_longitude) * math.cos(obliquity),
+        math.cos(ecliptic_longitude),
+    )
+    declination = math.asin(
+        math.sin(ecliptic_longitude) * math.sin(obliquity)
+    )
+    right_ascension_deg = math.degrees(right_ascension) % 360.0
+    sidereal_deg = (280.16 + 360.9856235 * days + longitude) % 360.0
+    hour_angle_deg = (sidereal_deg - right_ascension_deg + 180.0) % 360.0 - 180.0
+    hour_angle = math.radians(hour_angle_deg)
+    latitude_rad = math.radians(latitude)
+
+    sin_elevation = (
+        math.sin(latitude_rad) * math.sin(declination)
+        + math.cos(latitude_rad) * math.cos(declination) * math.cos(hour_angle)
+    )
+    elevation = math.degrees(math.asin(max(-1.0, min(1.0, sin_elevation))))
+    azimuth = (
+        math.degrees(
+            math.atan2(
+                math.sin(hour_angle),
+                math.cos(hour_angle) * math.sin(latitude_rad)
+                - math.tan(declination) * math.cos(latitude_rad),
+            )
+        )
+        + 180.0
+    ) % 360.0
+    return round(azimuth, 6), round(elevation, 6)
+
+
 def horizon_effective_irradiance_wm2(
     gti_wm2: float | int | None,
     diffuse_radiation_wm2: float | int | None,
