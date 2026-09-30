@@ -133,6 +133,43 @@ class SolarModelTests(unittest.TestCase):
         # The raw formula remains unchanged and independently valid.
         self.assertEqual(solar_model.pv_power_kw(500.0, 2.96, 2.45, 0.9), 1.332)
 
+    def test_f3_horizon_profile_requires_physical_wrap_contract(self) -> None:
+        profile = solar_model.parse_horizon_profile(
+            "[[0, 12], [90, 18], [180, 7], [270, 20], [360, 12]]"
+        )
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile[0], (0.0, 12.0))
+        self.assertEqual(profile[-1], (360.0, 12.0))
+        self.assertAlmostEqual(
+            solar_model.interpolate_horizon_elevation_deg(profile, 45.0),
+            15.0,
+        )
+        with self.assertRaises(ValueError):
+            solar_model.parse_horizon_profile("[[0, 10], [90, 20], [360, 11]]")
+        with self.assertRaises(ValueError):
+            solar_model.parse_horizon_profile("[[0, 10], [90, 20], [80, 15], [360, 10]]")
+
+    def test_f3_simple_horizon_rule_uses_gti_or_diffuse(self) -> None:
+        effective, blocked = solar_model.horizon_effective_irradiance_wm2(
+            500.0, 120.0, 25.0, 20.0
+        )
+        self.assertFalse(blocked)
+        self.assertEqual(effective, 500.0)
+        effective, blocked = solar_model.horizon_effective_irradiance_wm2(
+            500.0, 120.0, 15.0, 20.0
+        )
+        self.assertTrue(blocked)
+        self.assertEqual(effective, 120.0)
+
+    def test_f3_solar_position_is_deterministic_and_compass_based(self) -> None:
+        stamp = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+        azimuth, elevation = solar_model.solar_position_degrees(stamp, 51.8, 4.8)
+        self.assertIsNotNone(azimuth)
+        self.assertIsNotNone(elevation)
+        self.assertGreater(azimuth, 150.0)
+        self.assertLess(azimuth, 220.0)
+        self.assertGreater(elevation, 55.0)
+
     def test_temperature_helpers_reject_non_finite_inputs(self) -> None:
         self.assertIsNone(solar_model.cell_temperature_c(float("nan"), 500.0))
         self.assertIsNone(solar_model.temperature_factor(float("inf")))
