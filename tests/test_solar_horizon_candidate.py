@@ -27,8 +27,8 @@ def test_f3_sources_parse() -> None:
 def test_f3_open_meteo_inputs_share_native_request() -> None:
     source = _text(SOLAR)
     assert '"minutely_15": "temperature_2m,global_tilted_irradiance,direct_radiation,diffuse_radiation"' in source
-    assert "_normalize_radiation(north_payload, cutoff_utc, "direct_radiation")" in source
-    assert "_normalize_radiation(north_payload, cutoff_utc, "diffuse_radiation")" in source
+    assert '_normalize_radiation(north_payload, cutoff_utc, "direct_radiation")' in source
+    assert '_normalize_radiation(north_payload, cutoff_utc, "diffuse_radiation")' in source
     assert "backward_average_slot_start(" in source
 
 
