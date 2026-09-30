@@ -14,7 +14,8 @@
     },
     "error": {
       "source_not_found": "The selected source entity does not exist.",
-      "unsupported_unit": "The selected source must use W or kW."
+      "unsupported_unit": "The selected source must use W or kW.",
+      "invalid_horizon_profile": "The horizon profile must be valid JSON with strictly increasing azimuth 0..360°, equal elevation at 0/360°, and finite elevations between -90° and 90°."
     },
     "abort": {
       "already_configured": "Dummy OS Energy is already configured."
@@ -56,11 +57,13 @@
           "solar_north_tilt": "North roof tilt (degrees)",
           "solar_north_open_meteo_azimuth": "North roof Open-Meteo azimuth (degrees)",
           "solar_north_performance_factor": "North roof performance factor",
+          "solar_north_horizon_profile_json": "North physical horizon profile JSON [[azimuth,elevation], ...]",
           "solar_south_dc_kwp": "South roof DC capacity (kWp)",
           "solar_south_ac_kw": "South roof AC limit (kW)",
           "solar_south_tilt": "South roof tilt (degrees)",
           "solar_south_open_meteo_azimuth": "South roof Open-Meteo azimuth (degrees)",
-          "solar_south_performance_factor": "South roof performance factor"
+          "solar_south_performance_factor": "South roof performance factor",
+          "solar_south_horizon_profile_json": "South physical horizon profile JSON [[azimuth,elevation], ...]"
         }
       }
     }
