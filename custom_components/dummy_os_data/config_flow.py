@@ -39,11 +39,13 @@ from .const import (
     CONF_SOLAR_NORTH_AZIMUTH,
     CONF_SOLAR_NORTH_DC_KWP,
     CONF_SOLAR_NORTH_FACTOR,
+    CONF_SOLAR_NORTH_HORIZON_PROFILE,
     CONF_SOLAR_NORTH_TILT,
     CONF_SOLAR_SOUTH_AC_KW,
     CONF_SOLAR_SOUTH_AZIMUTH,
     CONF_SOLAR_SOUTH_DC_KWP,
     CONF_SOLAR_SOUTH_FACTOR,
+    CONF_SOLAR_SOUTH_HORIZON_PROFILE,
     CONF_SOLAR_SOUTH_TILT,
     CONF_TARIFF_PROFILE_ID,
     CONF_TARIFF_SUPPLIER,
@@ -59,6 +61,7 @@ from .const import (
     LEGACY_CONF_GRID_IMPORT_POWER_ENTITY,
     NAME,
 )
+from .solar_model import parse_horizon_profile
 
 
 def _power_selector() -> selector.EntitySelector:
@@ -80,6 +83,20 @@ def _validate_power_sources(
             continue
         if state.attributes.get("unit_of_measurement") not in {"W", "kW"}:
             errors[key] = "unsupported_unit"
+    return errors
+
+
+def _validate_horizon_profiles(user_input: dict[str, Any]) -> dict[str, str]:
+    """Validate optional F3 physical horizon JSON profiles."""
+    errors: dict[str, str] = {}
+    for key in (CONF_SOLAR_NORTH_HORIZON_PROFILE, CONF_SOLAR_SOUTH_HORIZON_PROFILE):
+        value = user_input.get(key)
+        if value in (None, "", "[]"):
+            continue
+        try:
+            parse_horizon_profile(value)
+        except ValueError:
+            errors[key] = "invalid_horizon_profile"
     return errors
 
 
@@ -151,6 +168,7 @@ class DummyOSDataOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             errors = _validate_power_sources(self.hass, user_input)
+            errors.update(_validate_horizon_profiles(user_input))
             if not errors:
                 return self.async_create_entry(title="", data=user_input)
 
@@ -188,11 +206,13 @@ class DummyOSDataOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(CONF_SOLAR_NORTH_TILT, default=self._current(CONF_SOLAR_NORTH_TILT, 37.0)): vol.All(vol.Coerce(float), vol.Range(min=0, max=90)),
                 vol.Required(CONF_SOLAR_NORTH_AZIMUTH, default=self._current(CONF_SOLAR_NORTH_AZIMUTH, 180.0)): vol.All(vol.Coerce(float), vol.Range(min=-180, max=180)),
                 vol.Required(CONF_SOLAR_NORTH_FACTOR, default=self._current(CONF_SOLAR_NORTH_FACTOR, 0.9)): vol.All(vol.Coerce(float), vol.Range(min=0)),
+                vol.Optional(CONF_SOLAR_NORTH_HORIZON_PROFILE, default=self._current(CONF_SOLAR_NORTH_HORIZON_PROFILE, "[]")): str,
                 vol.Required(CONF_SOLAR_SOUTH_DC_KWP, default=self._current(CONF_SOLAR_SOUTH_DC_KWP, 1.48)): vol.All(vol.Coerce(float), vol.Range(min=0)),
                 vol.Required(CONF_SOLAR_SOUTH_AC_KW, default=self._current(CONF_SOLAR_SOUTH_AC_KW, 1.23)): vol.All(vol.Coerce(float), vol.Range(min=0)),
                 vol.Required(CONF_SOLAR_SOUTH_TILT, default=self._current(CONF_SOLAR_SOUTH_TILT, 37.0)): vol.All(vol.Coerce(float), vol.Range(min=0, max=90)),
                 vol.Required(CONF_SOLAR_SOUTH_AZIMUTH, default=self._current(CONF_SOLAR_SOUTH_AZIMUTH, 0.0)): vol.All(vol.Coerce(float), vol.Range(min=-180, max=180)),
                 vol.Required(CONF_SOLAR_SOUTH_FACTOR, default=self._current(CONF_SOLAR_SOUTH_FACTOR, 0.9)): vol.All(vol.Coerce(float), vol.Range(min=0)),
+                vol.Optional(CONF_SOLAR_SOUTH_HORIZON_PROFILE, default=self._current(CONF_SOLAR_SOUTH_HORIZON_PROFILE, "[]")): str,
             }
         )
 

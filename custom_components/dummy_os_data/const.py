@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "dummy_os_data"
 NAME = "Dummy OS Energy"
-VERSION = "0.2.0-alpha.47"
+VERSION = "0.2.0-alpha.48"
 
 # Legacy Energy Forecast source key retained for config-entry compatibility only.
 # Energy Forecast production always consumes the canonical Source Home Power entity.
@@ -66,11 +66,13 @@ CONF_SOLAR_NORTH_AC_KW = "solar_north_ac_kw"
 CONF_SOLAR_NORTH_TILT = "solar_north_tilt"
 CONF_SOLAR_NORTH_AZIMUTH = "solar_north_open_meteo_azimuth"
 CONF_SOLAR_NORTH_FACTOR = "solar_north_performance_factor"
+CONF_SOLAR_NORTH_HORIZON_PROFILE = "solar_north_horizon_profile_json"
 CONF_SOLAR_SOUTH_DC_KWP = "solar_south_dc_kwp"
 CONF_SOLAR_SOUTH_AC_KW = "solar_south_ac_kw"
 CONF_SOLAR_SOUTH_TILT = "solar_south_tilt"
 CONF_SOLAR_SOUTH_AZIMUTH = "solar_south_open_meteo_azimuth"
 CONF_SOLAR_SOUTH_FACTOR = "solar_south_performance_factor"
+CONF_SOLAR_SOUTH_HORIZON_PROFILE = "solar_south_horizon_profile_json"
 
 DEFAULT_SOLAR_ACTUAL_TOTAL_ENTITY = "sensor.sb3_6_1av_41_857_pv_power"
 DEFAULT_SOLAR_ACTUAL_NORTH_DC_ENTITY = "sensor.sb3_6_1av_41_857_pv_power_a"

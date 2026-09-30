@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 import math
-from typing import Sequence
+from typing import Any, Sequence
 
 
 # F1 Energy Solar temperature-candidate reference parameters.
@@ -15,6 +16,190 @@ SOLAR_TEMPERATURE_ROSS_K_REFERENCE = 0.0342  # degC per W/m2
 SOLAR_TEMPERATURE_ALPHA_REFERENCE = -0.004  # 1/degC
 SOLAR_TEMPERATURE_CELL_STC_C = 25.0
 SOLAR_IRRADIANCE_STC_WM2 = 1000.0
+
+
+def parse_horizon_profile(
+    value: str | Sequence[Sequence[float | int]] | None,
+) -> tuple[tuple[float, float], ...] | None:
+    """Parse and validate one physical horizon profile.
+
+    The F3 contract uses compass azimuth (0=N, 90=E, 180=S, 270=W,
+    360=N) and requires explicit 0/360 wrap points with equal elevation.
+    Empty input is allowed at configuration level and means that the F3
+    candidate is not ready; it is never replaced by a learned/default curve.
+    """
+    if value is None:
+        return None
+    raw: Any = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text == "[]":
+            return None
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError as err:
+            raise ValueError("horizon profile must be valid JSON") from err
+    if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+        raise ValueError("horizon profile must contain at least two points")
+
+    points: list[tuple[float, float]] = []
+    previous_azimuth: float | None = None
+    for point in raw:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            raise ValueError("each horizon point must be [azimuth_deg, elevation_deg]")
+        try:
+            azimuth = float(point[0])
+            elevation = float(point[1])
+        except (TypeError, ValueError) as err:
+            raise ValueError("horizon profile values must be numeric") from err
+        if not math.isfinite(azimuth) or not math.isfinite(elevation):
+            raise ValueError("horizon profile values must be finite")
+        if not 0.0 <= azimuth <= 360.0:
+            raise ValueError("horizon azimuth must be within 0..360 degrees")
+        if not -90.0 <= elevation <= 90.0:
+            raise ValueError("horizon elevation must be within -90..90 degrees")
+        if previous_azimuth is not None and azimuth <= previous_azimuth:
+            raise ValueError("horizon azimuths must be strictly increasing")
+        points.append((round(azimuth, 6), round(elevation, 6)))
+        previous_azimuth = azimuth
+
+    if not math.isclose(points[0][0], 0.0, abs_tol=1e-9):
+        raise ValueError("horizon profile must start at azimuth 0")
+    if not math.isclose(points[-1][0], 360.0, abs_tol=1e-9):
+        raise ValueError("horizon profile must end at azimuth 360")
+    if not math.isclose(points[0][1], points[-1][1], abs_tol=1e-6):
+        raise ValueError("horizon elevations at azimuth 0 and 360 must match")
+    return tuple(points)
+
+
+def interpolate_horizon_elevation_deg(
+    profile: Sequence[Sequence[float | int]] | None,
+    azimuth_deg: float | int | None,
+) -> float | None:
+    """Linearly interpolate physical horizon elevation at compass azimuth."""
+    if profile is None:
+        return None
+    try:
+        azimuth = float(azimuth_deg)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(azimuth):
+        return None
+    parsed = parse_horizon_profile(profile)
+    if parsed is None:
+        return None
+    if math.isclose(azimuth, 360.0, abs_tol=1e-9):
+        normalized = 360.0
+    else:
+        normalized = azimuth % 360.0
+    for index in range(1, len(parsed)):
+        left_azimuth, left_elevation = parsed[index - 1]
+        right_azimuth, right_elevation = parsed[index]
+        if normalized <= right_azimuth:
+            span = right_azimuth - left_azimuth
+            if span <= 0.0:
+                return None
+            ratio = (normalized - left_azimuth) / span
+            return round(left_elevation + ratio * (right_elevation - left_elevation), 6)
+    return round(parsed[-1][1], 6)
+
+
+def solar_position_degrees(
+    timestamp: datetime,
+    latitude_deg: float | int,
+    longitude_deg: float | int,
+) -> tuple[float | None, float | None]:
+    """Return deterministic compass azimuth and solar elevation in degrees.
+
+    F3 evaluates geometry at the Open-Meteo backward-average source stamp,
+    i.e. slot_start + 15 minutes. This pure implementation uses standard
+    solar-coordinate equations and requires a timezone-aware timestamp.
+    """
+    if timestamp.tzinfo is None:
+        return None, None
+    try:
+        latitude = float(latitude_deg)
+        longitude = float(longitude_deg)
+    except (TypeError, ValueError):
+        return None, None
+    if not all(math.isfinite(v) for v in (latitude, longitude)):
+        return None, None
+    if not -90.0 <= latitude <= 90.0 or not -180.0 <= longitude <= 180.0:
+        return None, None
+
+    utc = timestamp.astimezone(timezone.utc)
+    # Days since J2000.0 (2000-01-01 12:00 UTC).
+    days = utc.timestamp() / 86400.0 - 10957.5
+    mean_anomaly = math.radians((357.5291 + 0.98560028 * days) % 360.0)
+    ecliptic_longitude = math.radians(
+        (
+            math.degrees(mean_anomaly)
+            + 1.9148 * math.sin(mean_anomaly)
+            + 0.0200 * math.sin(2.0 * mean_anomaly)
+            + 102.9372
+            + 180.0
+        )
+        % 360.0
+    )
+    obliquity = math.radians(23.4397)
+    right_ascension = math.atan2(
+        math.sin(ecliptic_longitude) * math.cos(obliquity),
+        math.cos(ecliptic_longitude),
+    )
+    declination = math.asin(
+        math.sin(ecliptic_longitude) * math.sin(obliquity)
+    )
+    right_ascension_deg = math.degrees(right_ascension) % 360.0
+    sidereal_deg = (280.16 + 360.9856235 * days + longitude) % 360.0
+    hour_angle_deg = (sidereal_deg - right_ascension_deg + 180.0) % 360.0 - 180.0
+    hour_angle = math.radians(hour_angle_deg)
+    latitude_rad = math.radians(latitude)
+
+    sin_elevation = (
+        math.sin(latitude_rad) * math.sin(declination)
+        + math.cos(latitude_rad) * math.cos(declination) * math.cos(hour_angle)
+    )
+    elevation = math.degrees(math.asin(max(-1.0, min(1.0, sin_elevation))))
+    azimuth = (
+        math.degrees(
+            math.atan2(
+                math.sin(hour_angle),
+                math.cos(hour_angle) * math.sin(latitude_rad)
+                - math.tan(declination) * math.cos(latitude_rad),
+            )
+        )
+        + 180.0
+    ) % 360.0
+    return round(azimuth, 6), round(elevation, 6)
+
+
+def horizon_effective_irradiance_wm2(
+    gti_wm2: float | int | None,
+    diffuse_radiation_wm2: float | int | None,
+    solar_elevation_deg: float | int | None,
+    local_horizon_elevation_deg: float | int | None,
+) -> tuple[float | None, bool | None]:
+    """Apply the F3 simple physical horizon rule.
+
+    When the solar elevation is below the local physical horizon, direct
+    sunlight is treated as blocked and effective irradiance is the Open-Meteo
+    diffuse_radiation contribution. Otherwise GTI remains authoritative.
+    """
+    try:
+        gti = float(gti_wm2)
+        diffuse = float(diffuse_radiation_wm2)
+        solar_elevation = float(solar_elevation_deg)
+        horizon_elevation = float(local_horizon_elevation_deg)
+    except (TypeError, ValueError):
+        return None, None
+    if not all(
+        math.isfinite(value)
+        for value in (gti, diffuse, solar_elevation, horizon_elevation)
+    ):
+        return None, None
+    blocked = solar_elevation < horizon_elevation
+    effective = max(0.0, diffuse if blocked else gti)
+    return round(effective, 6), blocked
 
 
 def cell_temperature_c(

@@ -28,11 +28,13 @@ from .const import (
     CONF_SOLAR_NORTH_AZIMUTH,
     CONF_SOLAR_NORTH_DC_KWP,
     CONF_SOLAR_NORTH_FACTOR,
+    CONF_SOLAR_NORTH_HORIZON_PROFILE,
     CONF_SOLAR_NORTH_TILT,
     CONF_SOLAR_SOUTH_AC_KW,
     CONF_SOLAR_SOUTH_AZIMUTH,
     CONF_SOLAR_SOUTH_DC_KWP,
     CONF_SOLAR_SOUTH_FACTOR,
+    CONF_SOLAR_SOUTH_HORIZON_PROFILE,
     CONF_SOLAR_SOUTH_TILT,
     DEFAULT_SOLAR_ACTUAL_NORTH_DC_ENTITY,
     DEFAULT_SOLAR_ACTUAL_SOUTH_DC_ENTITY,
@@ -58,10 +60,14 @@ from .solar_model import (
     backward_average_slot_start,
     cell_temperature_c,
     floor_slot_start,
+    horizon_effective_irradiance_wm2,
+    interpolate_horizon_elevation_deg,
     next_complete_slot,
     next_future_slot_index,
+    parse_horizon_profile,
     pv_power_kw,
     slot_energy_kwh,
+    solar_position_degrees,
     split_ac_power,
     temperature_corrected_pv_power_kw,
     temperature_factor,
@@ -78,6 +84,7 @@ SOLAR_REQUEST_EXTRA_SLOTS = 7
 SOLAR_STORAGE_SAVE_DELAY_SECONDS = 30
 SOLAR_HORIZON_HOURS = (1, 6, 24, 48, 72)
 SOLAR_TEMPERATURE_CANDIDATE_MODEL = "open_meteo_gti_temperature_candidate_v0.1"
+SOLAR_HORIZON_CANDIDATE_MODEL = "open_meteo_gti_horizon_temperature_candidate_v0.1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +167,70 @@ class SolarTemperatureCandidatePoint:
         ]
 
 
+@dataclass(frozen=True, slots=True)
+class SolarHorizonCandidatePoint:
+    """Parallel F3 horizon/direct-diffuse plus temperature candidate point."""
+
+    start: datetime
+    north_kwh: float
+    south_kwh: float
+    total_kwh: float
+    north_kw: float
+    south_kw: float
+    total_kw: float
+    north_gti_wm2: float
+    south_gti_wm2: float
+    north_direct_radiation_wm2: float
+    south_direct_radiation_wm2: float
+    north_diffuse_radiation_wm2: float
+    south_diffuse_radiation_wm2: float
+    solar_azimuth_deg: float
+    solar_elevation_deg: float
+    north_horizon_elevation_deg: float
+    south_horizon_elevation_deg: float
+    north_horizon_blocked: bool
+    south_horizon_blocked: bool
+    north_effective_irradiance_wm2: float
+    south_effective_irradiance_wm2: float
+    north_ambient_temperature_c: float
+    south_ambient_temperature_c: float
+    north_cell_temperature_c: float
+    south_cell_temperature_c: float
+    north_temperature_factor: float
+    south_temperature_factor: float
+
+    def as_list(self) -> list[int | float | bool]:
+        return [
+            int(self.start.timestamp() * 1000),
+            self.north_kwh,
+            self.south_kwh,
+            self.total_kwh,
+            self.north_kw,
+            self.south_kw,
+            self.total_kw,
+            self.north_gti_wm2,
+            self.south_gti_wm2,
+            self.north_direct_radiation_wm2,
+            self.south_direct_radiation_wm2,
+            self.north_diffuse_radiation_wm2,
+            self.south_diffuse_radiation_wm2,
+            self.solar_azimuth_deg,
+            self.solar_elevation_deg,
+            self.north_horizon_elevation_deg,
+            self.south_horizon_elevation_deg,
+            self.north_horizon_blocked,
+            self.south_horizon_blocked,
+            self.north_effective_irradiance_wm2,
+            self.south_effective_irradiance_wm2,
+            self.north_ambient_temperature_c,
+            self.south_ambient_temperature_c,
+            self.north_cell_temperature_c,
+            self.south_cell_temperature_c,
+            self.north_temperature_factor,
+            self.south_temperature_factor,
+        ]
+
+
 class DummyOSSolarCoordinator:
     """Fetch two roof forecasts and publish one source-neutral solar timeline."""
 
@@ -168,6 +239,10 @@ class DummyOSSolarCoordinator:
         self.entry = entry
         self._source_points: list[SolarPoint] = []
         self._temperature_candidate_points: list[SolarTemperatureCandidatePoint] = []
+        self._horizon_candidate_points: list[SolarHorizonCandidatePoint] = []
+        self.horizon_candidate_last_error: str | None = None
+        self.last_horizon_candidate_evaluation: dict[str, Any] | None = None
+        self._horizon_candidate_snapshot: dict[str, Any] | None = None
         self.temperature_candidate_last_error: str | None = None
         self.last_temperature_candidate_evaluation: dict[str, Any] | None = None
         self._temperature_candidate_snapshot: dict[str, Any] | None = None
@@ -231,6 +306,26 @@ class DummyOSSolarCoordinator:
     def temperature_candidate_source_point_count(self) -> int:
         """Return retained candidate buffer size."""
         return len(self._temperature_candidate_points)
+
+    @property
+    def horizon_candidate_points(self) -> list[SolarHorizonCandidatePoint]:
+        """Return F3 candidate on the same rolling native 72-hour window."""
+        if not self._horizon_candidate_points:
+            return []
+        local_now = dt_util.as_local(dt_util.utcnow())
+        cutoff = dt_util.as_utc(next_complete_slot(local_now, QUARTER_MINUTES))
+        return [
+            point for point in self._horizon_candidate_points if point.start >= cutoff
+        ][:FORECAST_SLOTS]
+
+    @property
+    def horizon_candidate_status(self) -> str:
+        """Return F3 readiness without affecting raw or F1."""
+        return "ready" if len(self.horizon_candidate_points) == FORECAST_SLOTS else "not_ready"
+
+    @property
+    def horizon_candidate_source_point_count(self) -> int:
+        return len(self._horizon_candidate_points)
 
     @property
     def planner_points(self) -> list[SolarPoint]:
@@ -301,6 +396,17 @@ class DummyOSSolarCoordinator:
             self._num(CONF_SOLAR_SOUTH_FACTOR, 0.9),
         )
 
+    def _horizon_profile(self, key: str) -> tuple[tuple[float, float], ...] | None:
+        return parse_horizon_profile(self._option(key, "[]"))
+
+    @property
+    def north_horizon_profile(self) -> tuple[tuple[float, float], ...] | None:
+        return self._horizon_profile(CONF_SOLAR_NORTH_HORIZON_PROFILE)
+
+    @property
+    def south_horizon_profile(self) -> tuple[tuple[float, float], ...] | None:
+        return self._horizon_profile(CONF_SOLAR_SOUTH_HORIZON_PROFILE)
+
     @property
     def actual_entities(self) -> tuple[str, str, str]:
         return (
@@ -317,6 +423,12 @@ class DummyOSSolarCoordinator:
         self.last_temperature_candidate_evaluation = (
             raw_candidate_evaluation
             if isinstance(raw_candidate_evaluation, dict)
+            else None
+        )
+        raw_horizon_candidate_evaluation = stored.get("last_horizon_candidate_evaluation")
+        self.last_horizon_candidate_evaluation = (
+            raw_horizon_candidate_evaluation
+            if isinstance(raw_horizon_candidate_evaluation, dict)
             else None
         )
         raw_temperature_ab_history = stored.get("temperature_ab_history")
@@ -438,6 +550,11 @@ class DummyOSSolarCoordinator:
                 if isinstance(stored.get("temperature_candidate_snapshot"), dict)
                 else None
             )
+            self._horizon_candidate_snapshot = (
+                stored.get("horizon_candidate_snapshot")
+                if isinstance(stored.get("horizon_candidate_snapshot"), dict)
+                else None
+            )
             for roof in ROOFS:
                 try:
                     self._energy_ws[roof] = max(
@@ -477,6 +594,12 @@ class DummyOSSolarCoordinator:
         )
         self._temperature_candidate_snapshot = (
             self._temperature_candidate_snapshot_for_slot(
+                self._quarter_start,
+                captured_at,
+            )
+        )
+        self._horizon_candidate_snapshot = (
+            self._horizon_candidate_snapshot_for_slot(
                 self._quarter_start,
                 captured_at,
             )
@@ -553,6 +676,53 @@ class DummyOSSolarCoordinator:
             "ross_coefficient": SOLAR_TEMPERATURE_ROSS_K_REFERENCE,
             "temperature_coefficient_per_c": SOLAR_TEMPERATURE_ALPHA_REFERENCE,
             "stc_cell_temperature_c": SOLAR_TEMPERATURE_CELL_STC_C,
+            "north_ambient_temperature_c": point.north_ambient_temperature_c,
+            "south_ambient_temperature_c": point.south_ambient_temperature_c,
+            "north_cell_temperature_c": point.north_cell_temperature_c,
+            "south_cell_temperature_c": point.south_cell_temperature_c,
+            "north_temperature_factor": point.north_temperature_factor,
+            "south_temperature_factor": point.south_temperature_factor,
+        }
+
+    def _horizon_candidate_snapshot_for_slot(
+        self,
+        slot_start: datetime,
+        captured_at: datetime,
+    ) -> dict[str, Any] | None:
+        """Freeze F3 at the identical pre-actual lock time."""
+        point = next(
+            (
+                item
+                for item in self._horizon_candidate_points
+                if item.start == dt_util.as_utc(slot_start)
+            ),
+            None,
+        )
+        captured = dt_util.as_utc(captured_at)
+        if point is None or captured > dt_util.as_utc(slot_start):
+            return None
+        return {
+            "start": point.start.isoformat(),
+            "end": (point.start + timedelta(minutes=QUARTER_MINUTES)).isoformat(),
+            "north_kwh": point.north_kwh,
+            "south_kwh": point.south_kwh,
+            "total_kwh": point.total_kwh,
+            "provider": "open_meteo",
+            "model": SOLAR_HORIZON_CANDIDATE_MODEL,
+            "source_update": self.last_successful_update.isoformat() if self.last_successful_update else None,
+            "captured_at": captured.isoformat(),
+            "solar_azimuth_deg": point.solar_azimuth_deg,
+            "solar_elevation_deg": point.solar_elevation_deg,
+            "north_horizon_elevation_deg": point.north_horizon_elevation_deg,
+            "south_horizon_elevation_deg": point.south_horizon_elevation_deg,
+            "north_horizon_blocked": point.north_horizon_blocked,
+            "south_horizon_blocked": point.south_horizon_blocked,
+            "north_effective_irradiance_wm2": point.north_effective_irradiance_wm2,
+            "south_effective_irradiance_wm2": point.south_effective_irradiance_wm2,
+            "north_direct_radiation_wm2": point.north_direct_radiation_wm2,
+            "south_direct_radiation_wm2": point.south_direct_radiation_wm2,
+            "north_diffuse_radiation_wm2": point.north_diffuse_radiation_wm2,
+            "south_diffuse_radiation_wm2": point.south_diffuse_radiation_wm2,
             "north_ambient_temperature_c": point.north_ambient_temperature_c,
             "south_ambient_temperature_c": point.south_ambient_temperature_c,
             "north_cell_temperature_c": point.north_cell_temperature_c,
@@ -663,6 +833,43 @@ class DummyOSSolarCoordinator:
                 self.last_temperature_candidate_evaluation[field] = (
                     self._temperature_candidate_snapshot.get(field)
                 )
+        self.last_horizon_candidate_evaluation = build_quarter_evaluation(
+            self._quarter_start,
+            self._horizon_candidate_snapshot,
+            self._energy_ws,
+            self._covered_seconds,
+            self._sample_count,
+            SOLAR_MIN_VALID_COVERAGE,
+        )
+        self.last_horizon_candidate_evaluation["candidate_model"] = SOLAR_HORIZON_CANDIDATE_MODEL
+        self.last_horizon_candidate_evaluation["candidate_status"] = (
+            "locked" if self._horizon_candidate_snapshot is not None else "not_ready"
+        )
+        self.last_horizon_candidate_evaluation["raw_forecast_model"] = self.last_evaluation.get("forecast_model")
+        self.last_horizon_candidate_evaluation["temperature_candidate_model"] = SOLAR_TEMPERATURE_CANDIDATE_MODEL
+        if self._horizon_candidate_snapshot is not None:
+            for field in (
+                "solar_azimuth_deg",
+                "solar_elevation_deg",
+                "north_horizon_elevation_deg",
+                "south_horizon_elevation_deg",
+                "north_horizon_blocked",
+                "south_horizon_blocked",
+                "north_effective_irradiance_wm2",
+                "south_effective_irradiance_wm2",
+                "north_direct_radiation_wm2",
+                "south_direct_radiation_wm2",
+                "north_diffuse_radiation_wm2",
+                "south_diffuse_radiation_wm2",
+                "north_ambient_temperature_c",
+                "south_ambient_temperature_c",
+                "north_cell_temperature_c",
+                "south_cell_temperature_c",
+                "north_temperature_factor",
+                "south_temperature_factor",
+            ):
+                self.last_horizon_candidate_evaluation[field] = self._horizon_candidate_snapshot.get(field)
+
         self._record_temperature_ab_validation()
 
         slot_id = self._quarter_start.isoformat()
@@ -774,6 +981,7 @@ class DummyOSSolarCoordinator:
                 "start": self._quarter_start.isoformat(),
                 "forecast_snapshot": self._forecast_snapshot,
                 "temperature_candidate_snapshot": self._temperature_candidate_snapshot,
+                "horizon_candidate_snapshot": self._horizon_candidate_snapshot,
                 "energy_ws": dict(self._energy_ws),
                 "covered_seconds": dict(self._covered_seconds),
                 "sample_count": self._sample_count,
@@ -782,6 +990,7 @@ class DummyOSSolarCoordinator:
             "active_quarter": active,
             "last_evaluation": self.last_evaluation,
             "last_temperature_candidate_evaluation": self.last_temperature_candidate_evaluation,
+            "last_horizon_candidate_evaluation": self.last_horizon_candidate_evaluation,
             "temperature_ab_history": self.temperature_ab_history,
             "temperature_ab_last_pair_status": self.temperature_ab_last_pair_status,
             "temperature_ab_last_slot_id": self.temperature_ab_last_slot_id,
@@ -819,7 +1028,7 @@ class DummyOSSolarCoordinator:
         params = {
             "latitude": self.latitude,
             "longitude": self.longitude,
-            "minutely_15": "temperature_2m,global_tilted_irradiance",
+            "minutely_15": "temperature_2m,global_tilted_irradiance,direct_radiation,diffuse_radiation",
             # Extra stamps cover backward-average alignment plus four rolling
             # quarter advances until the next hourly refresh.
             "forecast_minutely_15": FORECAST_SLOTS + SOLAR_REQUEST_EXTRA_SLOTS,
@@ -956,6 +1165,130 @@ class DummyOSSolarCoordinator:
                 f"{type(err).__name__}: {err}"
             )
 
+        # F3 is isolated from raw/F1. Invalid profiles or direct/diffuse inputs
+        # make only the horizon candidate not_ready.
+        try:
+            north_profile = self.north_horizon_profile
+            south_profile = self.south_horizon_profile
+            if north_profile is None or south_profile is None:
+                raise ValueError("Both north and south physical horizon profiles are required")
+
+            north_direct = self._normalize_radiation(north_payload, cutoff_utc, "direct_radiation")
+            south_direct = self._normalize_radiation(south_payload, cutoff_utc, "direct_radiation")
+            north_diffuse = self._normalize_radiation(north_payload, cutoff_utc, "diffuse_radiation")
+            south_diffuse = self._normalize_radiation(south_payload, cutoff_utc, "diffuse_radiation")
+            north_temperatures = self._normalize_interval_temperature(north_payload, cutoff_utc)
+            south_temperatures = self._normalize_interval_temperature(south_payload, cutoff_utc)
+            raw_starts = set(north_values)
+            for values in (
+                north_direct,
+                south_direct,
+                north_diffuse,
+                south_diffuse,
+                north_temperatures,
+                south_temperatures,
+            ):
+                if set(values) != raw_starts:
+                    raise ValueError("F3 candidate timeline does not align with raw GTI")
+
+            horizon_points: list[SolarHorizonCandidatePoint] = []
+            for start in sorted(north_values):
+                # Match upstream/source semantics: solar geometry is evaluated at
+                # the backward-average source stamp, i.e. slot end.
+                geometry_time = start + timedelta(minutes=SOLAR_RESOLUTION_MINUTES)
+                solar_azimuth, solar_elevation = solar_position_degrees(
+                    geometry_time,
+                    self.latitude,
+                    self.longitude,
+                )
+                if solar_azimuth is None or solar_elevation is None:
+                    raise ValueError(f"Invalid solar position at {start.isoformat()}")
+                north_horizon = interpolate_horizon_elevation_deg(north_profile, solar_azimuth)
+                south_horizon = interpolate_horizon_elevation_deg(south_profile, solar_azimuth)
+                if north_horizon is None or south_horizon is None:
+                    raise ValueError(f"Invalid horizon interpolation at {start.isoformat()}")
+
+                north_effective, north_blocked = horizon_effective_irradiance_wm2(
+                    north_values[start], north_diffuse[start], solar_elevation, north_horizon
+                )
+                south_effective, south_blocked = horizon_effective_irradiance_wm2(
+                    south_values[start], south_diffuse[start], solar_elevation, south_horizon
+                )
+                if None in (north_effective, south_effective, north_blocked, south_blocked):
+                    raise ValueError(f"Invalid F3 irradiance at {start.isoformat()}")
+
+                north_ambient = north_temperatures[start]
+                south_ambient = south_temperatures[start]
+                north_cell = cell_temperature_c(north_ambient, north_effective)
+                south_cell = cell_temperature_c(south_ambient, south_effective)
+                north_temp_factor = temperature_factor(north_cell)
+                south_temp_factor = temperature_factor(south_cell)
+                north_kw = temperature_corrected_pv_power_kw(
+                    north_effective,
+                    north_ambient,
+                    self.north.dc_capacity_kwp,
+                    self.north.ac_limit_kw,
+                    self.north.performance_factor,
+                )
+                south_kw = temperature_corrected_pv_power_kw(
+                    south_effective,
+                    south_ambient,
+                    self.south.dc_capacity_kwp,
+                    self.south.ac_limit_kw,
+                    self.south.performance_factor,
+                )
+                if None in (
+                    north_cell,
+                    south_cell,
+                    north_temp_factor,
+                    south_temp_factor,
+                    north_kw,
+                    south_kw,
+                ):
+                    raise ValueError(f"Invalid F3 temperature/power inputs at {start.isoformat()}")
+                north_kwh = slot_energy_kwh(north_kw)
+                south_kwh = slot_energy_kwh(south_kw)
+                horizon_points.append(
+                    SolarHorizonCandidatePoint(
+                        start=start,
+                        north_kwh=north_kwh,
+                        south_kwh=south_kwh,
+                        total_kwh=round(north_kwh + south_kwh, 6),
+                        north_kw=north_kw,
+                        south_kw=south_kw,
+                        total_kw=round(north_kw + south_kw, 6),
+                        north_gti_wm2=north_values[start],
+                        south_gti_wm2=south_values[start],
+                        north_direct_radiation_wm2=north_direct[start],
+                        south_direct_radiation_wm2=south_direct[start],
+                        north_diffuse_radiation_wm2=north_diffuse[start],
+                        south_diffuse_radiation_wm2=south_diffuse[start],
+                        solar_azimuth_deg=solar_azimuth,
+                        solar_elevation_deg=solar_elevation,
+                        north_horizon_elevation_deg=north_horizon,
+                        south_horizon_elevation_deg=south_horizon,
+                        north_horizon_blocked=bool(north_blocked),
+                        south_horizon_blocked=bool(south_blocked),
+                        north_effective_irradiance_wm2=north_effective,
+                        south_effective_irradiance_wm2=south_effective,
+                        north_ambient_temperature_c=north_ambient,
+                        south_ambient_temperature_c=south_ambient,
+                        north_cell_temperature_c=north_cell,
+                        south_cell_temperature_c=south_cell,
+                        north_temperature_factor=north_temp_factor,
+                        south_temperature_factor=south_temp_factor,
+                    )
+                )
+            if len(horizon_points) < FORECAST_SLOTS:
+                raise ValueError(
+                    f"Horizon candidate produced {len(horizon_points)} aligned slots; expected at least {FORECAST_SLOTS}"
+                )
+            self._horizon_candidate_points = horizon_points
+            self.horizon_candidate_last_error = None
+        except (ValueError, TypeError, KeyError) as err:
+            self._horizon_candidate_points = []
+            self.horizon_candidate_last_error = f"{type(err).__name__}: {err}"
+
         self.source_generation_time_ms = {
             "north": self._as_float(north_payload.get("generationtime_ms")),
             "south": self._as_float(south_payload.get("generationtime_ms")),
@@ -998,6 +1331,44 @@ class DummyOSSolarCoordinator:
                 result[slot_start_utc] = max(0.0, irradiance)
             except (TypeError, ValueError):
                 raise ValueError(f"Invalid irradiance at {raw_time}") from None
+            if len(result) >= FORECAST_SLOTS + SOLAR_BUFFER_SLOTS:
+                break
+        return result
+
+    @staticmethod
+    def _normalize_radiation(
+        payload: dict[str, Any],
+        cutoff_utc: datetime,
+        field: str,
+    ) -> dict[datetime, float]:
+        """Normalize one backward-average Open-Meteo radiation field."""
+        minutely = payload.get("minutely_15")
+        if not isinstance(minutely, dict):
+            raise ValueError("Open-Meteo response missing minutely_15")
+        times = minutely.get("time")
+        values = minutely.get(field)
+        if not isinstance(times, list) or not isinstance(values, list):
+            raise ValueError(f"Open-Meteo response missing {field} time series")
+        timezone = ZoneInfo(str(payload.get("timezone") or OPEN_METEO_SOLAR_TIMEZONE))
+        result: dict[datetime, float] = {}
+        for index, raw_time in enumerate(times):
+            if index >= len(values) or not isinstance(raw_time, str):
+                continue
+            local_dt = datetime.fromisoformat(raw_time)
+            if local_dt.tzinfo is None:
+                local_dt = local_dt.replace(tzinfo=timezone)
+            slot_start_utc = backward_average_slot_start(
+                local_dt.astimezone(dt_util.UTC), SOLAR_RESOLUTION_MINUTES
+            )
+            if slot_start_utc < cutoff_utc:
+                continue
+            try:
+                value = float(values[index])
+                if not math.isfinite(value):
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise ValueError(f"Invalid {field} at {raw_time}") from None
+            result[slot_start_utc] = max(0.0, value)
             if len(result) >= FORECAST_SLOTS + SOLAR_BUFFER_SLOTS:
                 break
         return result
@@ -1109,6 +1480,22 @@ class DummyOSSolarCoordinator:
     ) -> SolarTemperatureCandidatePoint | None:
         """Return the first F1 candidate slot strictly after the current quarter."""
         points = self.temperature_candidate_points
+        if not points:
+            return None
+        reference = dt_util.as_utc(now_utc or dt_util.utcnow())
+        index = next_future_slot_index(
+            [point.start for point in points],
+            reference,
+            QUARTER_MINUTES,
+        )
+        return points[index] if index is not None else None
+
+    def horizon_candidate_next_quarter_point(
+        self,
+        now_utc: datetime | None = None,
+    ) -> SolarHorizonCandidatePoint | None:
+        """Return the first F3 candidate slot strictly after the current quarter."""
+        points = self.horizon_candidate_points
         if not points:
             return None
         reference = dt_util.as_utc(now_utc or dt_util.utcnow())

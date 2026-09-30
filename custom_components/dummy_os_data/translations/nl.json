@@ -14,7 +14,8 @@
     },
     "error": {
       "source_not_found": "De geselecteerde bronentiteit bestaat niet.",
-      "unsupported_unit": "De geselecteerde bron moet W of kW gebruiken."
+      "unsupported_unit": "De geselecteerde bron moet W of kW gebruiken.",
+      "invalid_horizon_profile": "Het horizonprofiel moet geldige JSON zijn met strikt oplopende azimut 0..360°, gelijke elevatie op 0/360° en eindige elevaties tussen -90° en 90°."
     },
     "abort": {
       "already_configured": "Dummy OS Energy is al geconfigureerd."
@@ -56,11 +57,13 @@
           "solar_north_tilt": "Noord hellingshoek (graden)",
           "solar_north_open_meteo_azimuth": "Noord Open-Meteo-azimut (graden)",
           "solar_north_performance_factor": "Noord prestatiefactor",
+          "solar_north_horizon_profile_json": "Noord fysiek horizonprofiel JSON [[azimut,elevatie], ...]",
           "solar_south_dc_kwp": "Zuid DC-capaciteit (kWp)",
           "solar_south_ac_kw": "Zuid AC-limiet (kW)",
           "solar_south_tilt": "Zuid hellingshoek (graden)",
           "solar_south_open_meteo_azimuth": "Zuid Open-Meteo-azimut (graden)",
-          "solar_south_performance_factor": "Zuid prestatiefactor"
+          "solar_south_performance_factor": "Zuid prestatiefactor",
+          "solar_south_horizon_profile_json": "Zuid fysiek horizonprofiel JSON [[azimut,elevatie], ...]"
         }
       }
     }

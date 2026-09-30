@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN, FORECAST_SLOTS, NAME, SOLAR_MIN_VALID_COVERAGE, VERSION
 from .solar import (
     OPEN_METEO_SOLAR_MODEL,
+    SOLAR_HORIZON_CANDIDATE_MODEL,
     SOLAR_HORIZON_HOURS,
     SOLAR_RESOLUTION_MINUTES,
     SOLAR_TEMPERATURE_CANDIDATE_MODEL,
@@ -35,6 +36,9 @@ def build_solar_sensors(coordinator) -> list[SensorEntity]:
         DummyOSSolarTemperatureCandidateNextQuarterSensor(coordinator),
         DummyOSSolarTemperatureCandidateLastCompletedQuarterSensor(coordinator),
         DummyOSSolarTemperatureABValidationSensor(coordinator),
+        DummyOSSolarHorizonCandidateTimelineSensor(coordinator),
+        DummyOSSolarHorizonCandidateNextQuarterSensor(coordinator),
+        DummyOSSolarHorizonCandidateLastCompletedQuarterSensor(coordinator),
         DummyOSSolarDailySensor(coordinator, "today", "north"),
         DummyOSSolarDailySensor(coordinator, "today", "south"),
         DummyOSSolarDailySensor(coordinator, "today", "total"),
@@ -121,6 +125,9 @@ class DummyOSSolarStatusSensor(DummyOSSolarBaseSensor):
             "temperature_candidate_status": self.solar.temperature_candidate_status,
             "temperature_candidate_point_count": len(self.solar.temperature_candidate_points),
             "temperature_candidate_last_error": self.solar.temperature_candidate_last_error,
+            "horizon_candidate_status": self.solar.horizon_candidate_status,
+            "horizon_candidate_point_count": len(self.solar.horizon_candidate_points),
+            "horizon_candidate_last_error": self.solar.horizon_candidate_last_error,
             "mode": "observation_parallel",
         }
 
@@ -313,6 +320,149 @@ class DummyOSSolarTemperatureABValidationSensor(DummyOSSolarBaseSensor):
             "promotion_authority": False,
             "scope": "F2 exact-lock temperature A/B validation only",
         }
+
+
+class DummyOSSolarHorizonCandidateTimelineSensor(DummyOSSolarBaseSensor):
+    """Expose F3 physical horizon/direct-diffuse candidate timeline."""
+
+    _attr_name = "DO Solar Horizon Candidate Timeline"
+    _attr_unique_id = "do_solar_horizon_candidate_timeline"
+    _attr_suggested_object_id = "do_solar_horizon_candidate_timeline"
+    _attr_icon = "mdi:weather-sunset"
+    _unrecorded_attributes = frozenset({"points"})
+
+    @property
+    def native_value(self) -> int:
+        return len(self.solar.horizon_candidate_points)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        points = self.solar.horizon_candidate_points
+        north_profile = self.solar.north_horizon_profile
+        south_profile = self.solar.south_horizon_profile
+        return {
+            "phase": "F3",
+            "candidate_status": self.solar.horizon_candidate_status,
+            "candidate_role": "parallel_observer",
+            "source": "open_meteo",
+            "attribution": "Weather data by Open-Meteo.com",
+            "model": SOLAR_HORIZON_CANDIDATE_MODEL,
+            "raw_reference_model": OPEN_METEO_SOLAR_MODEL,
+            "temperature_candidate_model": SOLAR_TEMPERATURE_CANDIDATE_MODEL,
+            "resolution_minutes": SOLAR_RESOLUTION_MINUTES,
+            "horizon_hours": 72,
+            "slot_count": FORECAST_SLOTS,
+            "point_count": len(points),
+            "source_buffer_point_count": self.solar.horizon_candidate_source_point_count,
+            "last_error": self.solar.horizon_candidate_last_error,
+            "north_horizon_profile": [list(point) for point in north_profile] if north_profile else None,
+            "south_horizon_profile": [list(point) for point in south_profile] if south_profile else None,
+            "horizon_profile_semantics": "compass azimuth 0=N 90=E 180=S 270=W 360=N; linear interpolation",
+            "solar_position_semantics": "evaluated at slot_end/open_meteo backward-average source stamp",
+            "irradiance_rule": "solar_elevation>=local_horizon: GTI; below local_horizon: diffuse_radiation",
+            "direct_radiation_role": "diagnostic_only_in_F3; partial shading deferred",
+            "ac_cap_semantics": "existing_energy_per_array_ac_limit_kw_unchanged",
+            "point_format": "[unix_ms,north_kwh,south_kwh,total_kwh,north_kw,south_kw,total_kw,north_gti,south_gti,north_direct,south_direct,north_diffuse,south_diffuse,solar_azimuth,solar_elevation,north_horizon,south_horizon,north_blocked,south_blocked,north_effective,south_effective,north_ambient,south_ambient,north_cell,south_cell,north_temp_factor,south_temp_factor]",
+            "forecast_start": points[0].start.isoformat() if points else None,
+            "last_slot_start": points[-1].start.isoformat() if points else None,
+            "forecast_end": (
+                (points[-1].start + timedelta(minutes=SOLAR_RESOLUTION_MINUTES)).isoformat()
+                if points else None
+            ),
+            "recorder_points": "excluded",
+            "promotion_authority": False,
+            "points": [point.as_list() for point in points],
+        }
+
+
+class DummyOSSolarHorizonCandidateNextQuarterSensor(DummyOSSolarBaseSensor):
+    """Expose next F3 candidate slot for physical inspection."""
+
+    _attr_name = "DO Solar Horizon Candidate Next Quarter"
+    _attr_unique_id = "do_solar_horizon_candidate_next_quarter"
+    _attr_suggested_object_id = "do_solar_horizon_candidate_next_quarter"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_icon = "mdi:weather-sunset-up"
+
+    @property
+    def native_value(self) -> float | None:
+        point = self.solar.horizon_candidate_next_quarter_point()
+        return point.total_kwh if point else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        point = self.solar.horizon_candidate_next_quarter_point()
+        if point is None:
+            return {
+                "phase": "F3",
+                "candidate_status": self.solar.horizon_candidate_status,
+                "last_error": self.solar.horizon_candidate_last_error,
+                "model": SOLAR_HORIZON_CANDIDATE_MODEL,
+                "promotion_authority": False,
+            }
+        return {
+            "phase": "F3",
+            "candidate_status": self.solar.horizon_candidate_status,
+            "model": SOLAR_HORIZON_CANDIDATE_MODEL,
+            "start": point.start.isoformat(),
+            "north_kwh": point.north_kwh,
+            "south_kwh": point.south_kwh,
+            "solar_azimuth_deg": point.solar_azimuth_deg,
+            "solar_elevation_deg": point.solar_elevation_deg,
+            "north_horizon_elevation_deg": point.north_horizon_elevation_deg,
+            "south_horizon_elevation_deg": point.south_horizon_elevation_deg,
+            "north_horizon_blocked": point.north_horizon_blocked,
+            "south_horizon_blocked": point.south_horizon_blocked,
+            "north_gti_wm2": point.north_gti_wm2,
+            "south_gti_wm2": point.south_gti_wm2,
+            "north_direct_radiation_wm2": point.north_direct_radiation_wm2,
+            "south_direct_radiation_wm2": point.south_direct_radiation_wm2,
+            "north_diffuse_radiation_wm2": point.north_diffuse_radiation_wm2,
+            "south_diffuse_radiation_wm2": point.south_diffuse_radiation_wm2,
+            "north_effective_irradiance_wm2": point.north_effective_irradiance_wm2,
+            "south_effective_irradiance_wm2": point.south_effective_irradiance_wm2,
+            "north_ambient_temperature_c": point.north_ambient_temperature_c,
+            "south_ambient_temperature_c": point.south_ambient_temperature_c,
+            "north_cell_temperature_c": point.north_cell_temperature_c,
+            "south_cell_temperature_c": point.south_cell_temperature_c,
+            "north_temperature_factor": point.north_temperature_factor,
+            "south_temperature_factor": point.south_temperature_factor,
+            "selection": "first_future_slot",
+            "promotion_authority": False,
+        }
+
+
+class DummyOSSolarHorizonCandidateLastCompletedQuarterSensor(DummyOSSolarBaseSensor):
+    """Expose locked F3 candidate versus the same completed actual quarter."""
+
+    _attr_name = "DO Solar Horizon Candidate Evaluation Last Completed Quarter"
+    _attr_unique_id = "do_solar_horizon_candidate_evaluation_last_completed_quarter"
+    _attr_suggested_object_id = "do_solar_horizon_candidate_evaluation_last_completed_quarter"
+    _attr_icon = "mdi:chart-bell-curve-cumulative"
+
+    @property
+    def native_value(self) -> str | None:
+        evaluation = self.solar.last_horizon_candidate_evaluation
+        return evaluation.get("slot_id") if evaluation else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        evaluation = self.solar.last_horizon_candidate_evaluation
+        if evaluation is None:
+            return {
+                "phase": "F3",
+                "status": "waiting_for_first_completed_quarter",
+                "candidate_status": self.solar.horizon_candidate_status,
+                "model": SOLAR_HORIZON_CANDIDATE_MODEL,
+                "resolution_minutes": SOLAR_RESOLUTION_MINUTES,
+                "minimum_coverage_percent": SOLAR_MIN_VALID_COVERAGE * 100.0,
+                "promotion_authority": False,
+            }
+        result = dict(evaluation)
+        result["phase"] = "F3"
+        result["promotion_authority"] = False
+        return result
 
 
 class DummyOSSolarDailySensor(DummyOSSolarBaseSensor):
