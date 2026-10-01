@@ -532,12 +532,8 @@ class DummyOSSolarPartialShadingCandidateLastCompletedQuarterSensor(
     """Expose locked F5 observer versus the completed actual quarter."""
 
     _attr_name = "DO Solar Partial Shading Candidate Evaluation Last Completed Quarter"
-    _attr_unique_id = (
-        "do_solar_partial_shading_candidate_evaluation_last_completed_quarter"
-    )
-    _attr_suggested_object_id = (
-        "do_solar_partial_shading_candidate_evaluation_last_completed_quarter"
-    )
+    _attr_unique_id = "do_solar_partial_shading_candidate_evaluation_last_completed_quarter"
+    _attr_suggested_object_id = "do_solar_partial_shading_candidate_evaluation_last_completed_quarter"
     _attr_icon = "mdi:chart-bell-curve-cumulative"
 
     @property
