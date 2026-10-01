@@ -202,6 +202,42 @@ def horizon_effective_irradiance_wm2(
     return round(effective, 6), blocked
 
 
+def partial_shading_effective_irradiance_wm2(
+    gti_wm2: float | int | None,
+    diffuse_radiation_wm2: float | int | None,
+    direct_radiation_wm2: float | int | None,
+    horizon_blocked: bool | None,
+) -> tuple[float | None, float | None]:
+    """Apply the F5 experimental partial-shading observer rule.
+
+    The F3 horizon trigger remains authoritative. Non-blocked slots preserve
+    GTI exactly. When blocked, the diffuse contribution is weighted by the
+    diffuse share of diffuse+direct radiation, following the independently
+    implemented upstream experimental concept documented in the Solar workdoc.
+    """
+    try:
+        gti = float(gti_wm2)
+        diffuse = float(diffuse_radiation_wm2)
+        direct = float(direct_radiation_wm2)
+    except (TypeError, ValueError):
+        return None, None
+    if not all(math.isfinite(value) for value in (gti, diffuse, direct)):
+        return None, None
+    if not isinstance(horizon_blocked, bool):
+        return None, None
+
+    gti = max(0.0, gti)
+    diffuse = max(0.0, diffuse)
+    direct = max(0.0, direct)
+    if not horizon_blocked:
+        return round(gti, 6), 1.0
+
+    total = diffuse + direct
+    factor = 1.0 if total <= 0.0 else max(0.0, min(1.0, diffuse / total))
+    effective = diffuse * factor
+    return round(effective, 6), round(factor, 6)
+
+
 def cell_temperature_c(
     ambient_temperature_c: float | int | None,
     irradiance_wm2: float | int | None,
