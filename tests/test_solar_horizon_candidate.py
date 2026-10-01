@@ -45,9 +45,12 @@ def test_f3_profiles_are_options_not_learned_curves() -> None:
 def test_f3_simple_horizon_rule_has_no_partial_shading() -> None:
     source = _text(SOLAR)
     model = _text(ROOT / "custom_components" / "dummy_os_data" / "solar_model.py")
-    assert "horizon_effective_irradiance_wm2(" in source
+    f3_start = source.index("# F3 is isolated from raw/F1")
+    f5_start = source.index("# F5 is isolated from raw/F1/F3/F4", f3_start)
+    f3_block = source[f3_start:f5_start]
+    assert "horizon_effective_irradiance_wm2(" in f3_block
     assert "diffuse if blocked else gti" in model
-    assert "partial_shading" not in source
+    assert "partial_shading_effective_irradiance_wm2" not in f3_block
     assert "direct_radiation_role" in _text(SOLAR_SENSOR)
 
 
