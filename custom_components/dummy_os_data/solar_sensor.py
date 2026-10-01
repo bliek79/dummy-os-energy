@@ -39,6 +39,7 @@ def build_solar_sensors(coordinator) -> list[SensorEntity]:
         DummyOSSolarHorizonCandidateTimelineSensor(coordinator),
         DummyOSSolarHorizonCandidateNextQuarterSensor(coordinator),
         DummyOSSolarHorizonCandidateLastCompletedQuarterSensor(coordinator),
+        DummyOSSolarMultiModelValidationSensor(coordinator),
         DummyOSSolarDailySensor(coordinator, "today", "north"),
         DummyOSSolarDailySensor(coordinator, "today", "south"),
         DummyOSSolarDailySensor(coordinator, "today", "total"),
@@ -319,6 +320,80 @@ class DummyOSSolarTemperatureABValidationSensor(DummyOSSolarBaseSensor):
             "recent_days": summary.get("recent_days"),
             "promotion_authority": False,
             "scope": "F2 exact-lock temperature A/B validation only",
+        }
+
+
+class DummyOSSolarMultiModelValidationSensor(DummyOSSolarBaseSensor):
+    """Expose persistent F4 raw/temperature/horizon validation."""
+
+    _attr_name = "DO Solar Multi-Model Validation"
+    _attr_unique_id = "do_solar_multimodel_validation"
+    _attr_suggested_object_id = "do_solar_multimodel_validation"
+    _attr_icon = "mdi:compare-horizontal"
+    _unrecorded_attributes = frozenset(
+        {
+            "recent_days",
+            "breakdown_by_solar_elevation",
+            "breakdown_by_solar_azimuth",
+            "breakdown_by_weather_regime",
+        }
+    )
+
+    @property
+    def native_value(self) -> int:
+        summary = self.solar.multimodel_validation_summary
+        return int(summary.get("sample_count", 0))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        summary = self.solar.multimodel_validation_summary
+        return {
+            "phase": "F4",
+            "role": "multimodel_validation",
+            "status": summary.get("status"),
+            "sample_count": summary.get("sample_count"),
+            "day_count": summary.get("day_count"),
+            "first_date": summary.get("first_date"),
+            "last_date": summary.get("last_date"),
+            "last_pair_status": summary.get("last_pair_status"),
+            "last_slot_id": summary.get("last_slot_id"),
+            "raw_model": "open_meteo_gti_physical_v0.1",
+            "temperature_model": SOLAR_TEMPERATURE_CANDIDATE_MODEL,
+            "horizon_model": SOLAR_HORIZON_CANDIDATE_MODEL,
+            "minimum_coverage_percent": SOLAR_MIN_VALID_COVERAGE * 100.0,
+            "metrics": summary.get("components"),
+            "breakdown_by_solar_elevation": summary.get(
+                "breakdown_by_solar_elevation"
+            ),
+            "breakdown_by_solar_azimuth": summary.get(
+                "breakdown_by_solar_azimuth"
+            ),
+            "breakdown_by_weather_regime": summary.get(
+                "breakdown_by_weather_regime"
+            ),
+            "recent_days": summary.get("recent_days"),
+            "solar_elevation_bands": {
+                "below_horizon": "<0deg",
+                "low": "0..<10deg",
+                "medium": "10..<25deg",
+                "high": ">=25deg",
+            },
+            "solar_azimuth_sectors": {
+                "north": "315..360 or 0..<45deg",
+                "east": "45..<135deg",
+                "south": "135..<225deg",
+                "west": "225..<315deg",
+            },
+            "weather_regime_semantics": (
+                "mean locked north/south direct+diffuse; dark<=1W/m2; "
+                "diffuse_dominant diffuse_fraction>=0.75; mixed 0.35..0.75; "
+                "direct_dominant<0.35"
+            ),
+            "promotion_authority": False,
+            "scope": (
+                "F4 exact-lock raw vs temperature vs horizon validation only; "
+                "no forecast-formula change"
+            ),
         }
 
 

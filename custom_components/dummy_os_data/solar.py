@@ -53,6 +53,12 @@ from .solar_temperature_ab import (
     new_temperature_ab_day,
     summarize_temperature_ab_history,
 )
+from .solar_multimodel_validation import (
+    add_multimodel_sample,
+    build_multimodel_pair,
+    new_multimodel_day,
+    summarize_multimodel_history,
+)
 from .solar_model import (
     SOLAR_TEMPERATURE_ALPHA_REFERENCE,
     SOLAR_TEMPERATURE_CELL_STC_C,
@@ -249,6 +255,9 @@ class DummyOSSolarCoordinator:
         self.temperature_ab_history: list[dict[str, Any]] = []
         self.temperature_ab_last_pair_status = "waiting"
         self.temperature_ab_last_slot_id: str | None = None
+        self.multimodel_history: list[dict[str, Any]] = []
+        self.multimodel_last_pair_status = "waiting"
+        self.multimodel_last_slot_id: str | None = None
         self.last_successful_update: datetime | None = None
         self.last_attempt: datetime | None = None
         self.last_error: str | None = None
@@ -447,6 +456,23 @@ class DummyOSSolarCoordinator:
         raw_pair_slot = stored.get("temperature_ab_last_slot_id")
         if isinstance(raw_pair_slot, str):
             self.temperature_ab_last_slot_id = raw_pair_slot
+
+        raw_multimodel_history = stored.get("multimodel_history")
+        if isinstance(raw_multimodel_history, list):
+            self.multimodel_history = sorted(
+                [
+                    item
+                    for item in raw_multimodel_history
+                    if isinstance(item, dict) and isinstance(item.get("date"), str)
+                ],
+                key=lambda item: str(item.get("date")),
+            )[-MAX_HISTORY_DAYS:]
+        raw_multimodel_status = stored.get("multimodel_last_pair_status")
+        if isinstance(raw_multimodel_status, str):
+            self.multimodel_last_pair_status = raw_multimodel_status
+        raw_multimodel_slot = stored.get("multimodel_last_slot_id")
+        if isinstance(raw_multimodel_slot, str):
+            self.multimodel_last_slot_id = raw_multimodel_slot
 
         raw_horizon_evaluations = stored.get("last_horizon_evaluations")
         if isinstance(raw_horizon_evaluations, list):
@@ -871,6 +897,7 @@ class DummyOSSolarCoordinator:
                 self.last_horizon_candidate_evaluation[field] = self._horizon_candidate_snapshot.get(field)
 
         self._record_temperature_ab_validation()
+        self._record_multimodel_validation()
 
         slot_id = self._quarter_start.isoformat()
         due: list[tuple[str, dict[str, Any]]] = [
@@ -973,6 +1000,60 @@ class DummyOSSolarCoordinator:
         summary["last_slot_id"] = self.temperature_ab_last_slot_id
         return summary
 
+    def _record_multimodel_validation(self) -> None:
+        """Persist one exact-lock F4 raw/temperature/horizon sample when valid."""
+        status, sample = build_multimodel_pair(
+            self.last_evaluation,
+            self.last_temperature_candidate_evaluation,
+            self.last_horizon_candidate_evaluation,
+        )
+        self.multimodel_last_pair_status = status
+        if status != "ok" or sample is None or self._quarter_start is None:
+            return
+
+        slot_id = str(sample["slot_id"])
+        if slot_id == self.multimodel_last_slot_id:
+            return
+        if self.multimodel_last_slot_id is not None:
+            try:
+                current_slot = datetime.fromisoformat(slot_id)
+                previous_slot = datetime.fromisoformat(self.multimodel_last_slot_id)
+                if current_slot <= previous_slot:
+                    return
+            except ValueError:
+                return
+
+        date_key = dt_util.as_local(self._quarter_start).date().isoformat()
+        day = next(
+            (
+                item
+                for item in self.multimodel_history
+                if item.get("date") == date_key
+            ),
+            None,
+        )
+        if day is None:
+            day = new_multimodel_day(date_key)
+            self.multimodel_history.append(day)
+        add_multimodel_sample(day, sample)
+        self.multimodel_history.sort(key=lambda item: str(item.get("date")))
+        self.multimodel_history = self.multimodel_history[-MAX_HISTORY_DAYS:]
+        self.multimodel_last_slot_id = slot_id
+
+    @property
+    def multimodel_validation_summary(self) -> dict[str, Any]:
+        """Return compact F4 validation evidence without winner/promotion logic."""
+        summary = summarize_multimodel_history(self.multimodel_history)
+        summary["status"] = (
+            "collecting"
+            if int(summary.get("sample_count", 0)) > 0
+            else "waiting_for_valid_triple"
+        )
+        summary["phase"] = "F4"
+        summary["last_pair_status"] = self.multimodel_last_pair_status
+        summary["last_slot_id"] = self.multimodel_last_slot_id
+        return summary
+
     def _storage_data(self) -> dict[str, Any]:
         """Return compact JSON-safe evaluation state."""
         active = None
@@ -994,6 +1075,9 @@ class DummyOSSolarCoordinator:
             "temperature_ab_history": self.temperature_ab_history,
             "temperature_ab_last_pair_status": self.temperature_ab_last_pair_status,
             "temperature_ab_last_slot_id": self.temperature_ab_last_slot_id,
+            "multimodel_history": self.multimodel_history,
+            "multimodel_last_pair_status": self.multimodel_last_pair_status,
+            "multimodel_last_slot_id": self.multimodel_last_slot_id,
             "last_horizon_evaluations": self.last_horizon_evaluations,
             "horizon_snapshots": self._horizon_snapshots,
         }
