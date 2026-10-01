@@ -59,6 +59,12 @@ from .solar_multimodel_validation import (
     new_multimodel_day,
     summarize_multimodel_history,
 )
+from .solar_partial_shading_validation import (
+    add_partial_shading_sample,
+    build_partial_shading_pair,
+    new_partial_shading_day,
+    summarize_partial_shading_history,
+)
 from .solar_model import (
     SOLAR_TEMPERATURE_ALPHA_REFERENCE,
     SOLAR_TEMPERATURE_CELL_STC_C,
@@ -71,6 +77,7 @@ from .solar_model import (
     next_complete_slot,
     next_future_slot_index,
     parse_horizon_profile,
+    partial_shading_effective_irradiance_wm2,
     pv_power_kw,
     slot_energy_kwh,
     solar_position_degrees,
@@ -91,6 +98,7 @@ SOLAR_STORAGE_SAVE_DELAY_SECONDS = 30
 SOLAR_HORIZON_HOURS = (1, 6, 24, 48, 72)
 SOLAR_TEMPERATURE_CANDIDATE_MODEL = "open_meteo_gti_temperature_candidate_v0.1"
 SOLAR_HORIZON_CANDIDATE_MODEL = "open_meteo_gti_horizon_temperature_candidate_v0.1"
+SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL = "open_meteo_gti_horizon_partial_temperature_candidate_v0.1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +245,74 @@ class SolarHorizonCandidatePoint:
         ]
 
 
+@dataclass(frozen=True, slots=True)
+class SolarPartialShadingCandidatePoint:
+    """Parallel F5 experimental partial-shading observer point."""
+
+    start: datetime
+    north_kwh: float
+    south_kwh: float
+    total_kwh: float
+    north_kw: float
+    south_kw: float
+    total_kw: float
+    north_gti_wm2: float
+    south_gti_wm2: float
+    north_direct_radiation_wm2: float
+    south_direct_radiation_wm2: float
+    north_diffuse_radiation_wm2: float
+    south_diffuse_radiation_wm2: float
+    solar_azimuth_deg: float
+    solar_elevation_deg: float
+    north_horizon_elevation_deg: float
+    south_horizon_elevation_deg: float
+    north_horizon_blocked: bool
+    south_horizon_blocked: bool
+    north_partial_factor: float
+    south_partial_factor: float
+    north_effective_irradiance_wm2: float
+    south_effective_irradiance_wm2: float
+    north_ambient_temperature_c: float
+    south_ambient_temperature_c: float
+    north_cell_temperature_c: float
+    south_cell_temperature_c: float
+    north_temperature_factor: float
+    south_temperature_factor: float
+
+    def as_list(self) -> list[int | float | bool]:
+        return [
+            int(self.start.timestamp() * 1000),
+            self.north_kwh,
+            self.south_kwh,
+            self.total_kwh,
+            self.north_kw,
+            self.south_kw,
+            self.total_kw,
+            self.north_gti_wm2,
+            self.south_gti_wm2,
+            self.north_direct_radiation_wm2,
+            self.south_direct_radiation_wm2,
+            self.north_diffuse_radiation_wm2,
+            self.south_diffuse_radiation_wm2,
+            self.solar_azimuth_deg,
+            self.solar_elevation_deg,
+            self.north_horizon_elevation_deg,
+            self.south_horizon_elevation_deg,
+            self.north_horizon_blocked,
+            self.south_horizon_blocked,
+            self.north_partial_factor,
+            self.south_partial_factor,
+            self.north_effective_irradiance_wm2,
+            self.south_effective_irradiance_wm2,
+            self.north_ambient_temperature_c,
+            self.south_ambient_temperature_c,
+            self.north_cell_temperature_c,
+            self.south_cell_temperature_c,
+            self.north_temperature_factor,
+            self.south_temperature_factor,
+        ]
+
+
 class DummyOSSolarCoordinator:
     """Fetch two roof forecasts and publish one source-neutral solar timeline."""
 
@@ -249,6 +325,13 @@ class DummyOSSolarCoordinator:
         self.horizon_candidate_last_error: str | None = None
         self.last_horizon_candidate_evaluation: dict[str, Any] | None = None
         self._horizon_candidate_snapshot: dict[str, Any] | None = None
+        self._partial_shading_candidate_points: list[SolarPartialShadingCandidatePoint] = []
+        self.partial_shading_candidate_last_error: str | None = None
+        self.last_partial_shading_candidate_evaluation: dict[str, Any] | None = None
+        self._partial_shading_candidate_snapshot: dict[str, Any] | None = None
+        self.partial_shading_history: list[dict[str, Any]] = []
+        self.partial_shading_last_pair_status = "waiting"
+        self.partial_shading_last_slot_id: str | None = None
         self.temperature_candidate_last_error: str | None = None
         self.last_temperature_candidate_evaluation: dict[str, Any] | None = None
         self._temperature_candidate_snapshot: dict[str, Any] | None = None
@@ -335,6 +418,32 @@ class DummyOSSolarCoordinator:
     @property
     def horizon_candidate_source_point_count(self) -> int:
         return len(self._horizon_candidate_points)
+
+    @property
+    def partial_shading_candidate_points(self) -> list[SolarPartialShadingCandidatePoint]:
+        """Return F5 observer on the same rolling native 72-hour window."""
+        if not self._partial_shading_candidate_points:
+            return []
+        local_now = dt_util.as_local(dt_util.utcnow())
+        cutoff = dt_util.as_utc(next_complete_slot(local_now, QUARTER_MINUTES))
+        return [
+            point
+            for point in self._partial_shading_candidate_points
+            if point.start >= cutoff
+        ][:FORECAST_SLOTS]
+
+    @property
+    def partial_shading_candidate_status(self) -> str:
+        """Return F5 readiness without affecting raw/F1/F3/F4."""
+        return (
+            "ready"
+            if len(self.partial_shading_candidate_points) == FORECAST_SLOTS
+            else "not_ready"
+        )
+
+    @property
+    def partial_shading_candidate_source_point_count(self) -> int:
+        return len(self._partial_shading_candidate_points)
 
     @property
     def planner_points(self) -> list[SolarPoint]:
@@ -440,6 +549,14 @@ class DummyOSSolarCoordinator:
             if isinstance(raw_horizon_candidate_evaluation, dict)
             else None
         )
+        raw_partial_candidate_evaluation = stored.get(
+            "last_partial_shading_candidate_evaluation"
+        )
+        self.last_partial_shading_candidate_evaluation = (
+            raw_partial_candidate_evaluation
+            if isinstance(raw_partial_candidate_evaluation, dict)
+            else None
+        )
         raw_temperature_ab_history = stored.get("temperature_ab_history")
         if isinstance(raw_temperature_ab_history, list):
             self.temperature_ab_history = sorted(
@@ -473,6 +590,23 @@ class DummyOSSolarCoordinator:
         raw_multimodel_slot = stored.get("multimodel_last_slot_id")
         if isinstance(raw_multimodel_slot, str):
             self.multimodel_last_slot_id = raw_multimodel_slot
+
+        raw_partial_history = stored.get("partial_shading_history")
+        if isinstance(raw_partial_history, list):
+            self.partial_shading_history = sorted(
+                [
+                    item
+                    for item in raw_partial_history
+                    if isinstance(item, dict) and isinstance(item.get("date"), str)
+                ],
+                key=lambda item: str(item.get("date")),
+            )[-MAX_HISTORY_DAYS:]
+        raw_partial_status = stored.get("partial_shading_last_pair_status")
+        if isinstance(raw_partial_status, str):
+            self.partial_shading_last_pair_status = raw_partial_status
+        raw_partial_slot = stored.get("partial_shading_last_slot_id")
+        if isinstance(raw_partial_slot, str):
+            self.partial_shading_last_slot_id = raw_partial_slot
 
         raw_horizon_evaluations = stored.get("last_horizon_evaluations")
         if isinstance(raw_horizon_evaluations, list):
@@ -581,6 +715,11 @@ class DummyOSSolarCoordinator:
                 if isinstance(stored.get("horizon_candidate_snapshot"), dict)
                 else None
             )
+            self._partial_shading_candidate_snapshot = (
+                stored.get("partial_shading_candidate_snapshot")
+                if isinstance(stored.get("partial_shading_candidate_snapshot"), dict)
+                else None
+            )
             for roof in ROOFS:
                 try:
                     self._energy_ws[roof] = max(
@@ -626,6 +765,12 @@ class DummyOSSolarCoordinator:
         )
         self._horizon_candidate_snapshot = (
             self._horizon_candidate_snapshot_for_slot(
+                self._quarter_start,
+                captured_at,
+            )
+        )
+        self._partial_shading_candidate_snapshot = (
+            self._partial_shading_candidate_snapshot_for_slot(
                 self._quarter_start,
                 captured_at,
             )
@@ -743,6 +888,59 @@ class DummyOSSolarCoordinator:
             "south_horizon_elevation_deg": point.south_horizon_elevation_deg,
             "north_horizon_blocked": point.north_horizon_blocked,
             "south_horizon_blocked": point.south_horizon_blocked,
+            "north_effective_irradiance_wm2": point.north_effective_irradiance_wm2,
+            "south_effective_irradiance_wm2": point.south_effective_irradiance_wm2,
+            "north_direct_radiation_wm2": point.north_direct_radiation_wm2,
+            "south_direct_radiation_wm2": point.south_direct_radiation_wm2,
+            "north_diffuse_radiation_wm2": point.north_diffuse_radiation_wm2,
+            "south_diffuse_radiation_wm2": point.south_diffuse_radiation_wm2,
+            "north_ambient_temperature_c": point.north_ambient_temperature_c,
+            "south_ambient_temperature_c": point.south_ambient_temperature_c,
+            "north_cell_temperature_c": point.north_cell_temperature_c,
+            "south_cell_temperature_c": point.south_cell_temperature_c,
+            "north_temperature_factor": point.north_temperature_factor,
+            "south_temperature_factor": point.south_temperature_factor,
+        }
+
+    def _partial_shading_candidate_snapshot_for_slot(
+        self,
+        slot_start: datetime,
+        captured_at: datetime,
+    ) -> dict[str, Any] | None:
+        """Freeze F5 at the identical pre-actual lock time."""
+        point = next(
+            (
+                item
+                for item in self._partial_shading_candidate_points
+                if item.start == dt_util.as_utc(slot_start)
+            ),
+            None,
+        )
+        captured = dt_util.as_utc(captured_at)
+        if point is None or captured > dt_util.as_utc(slot_start):
+            return None
+        return {
+            "start": point.start.isoformat(),
+            "end": (point.start + timedelta(minutes=QUARTER_MINUTES)).isoformat(),
+            "north_kwh": point.north_kwh,
+            "south_kwh": point.south_kwh,
+            "total_kwh": point.total_kwh,
+            "provider": "open_meteo",
+            "model": SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL,
+            "source_update": (
+                self.last_successful_update.isoformat()
+                if self.last_successful_update
+                else None
+            ),
+            "captured_at": captured.isoformat(),
+            "solar_azimuth_deg": point.solar_azimuth_deg,
+            "solar_elevation_deg": point.solar_elevation_deg,
+            "north_horizon_elevation_deg": point.north_horizon_elevation_deg,
+            "south_horizon_elevation_deg": point.south_horizon_elevation_deg,
+            "north_horizon_blocked": point.north_horizon_blocked,
+            "south_horizon_blocked": point.south_horizon_blocked,
+            "north_partial_factor": point.north_partial_factor,
+            "south_partial_factor": point.south_partial_factor,
             "north_effective_irradiance_wm2": point.north_effective_irradiance_wm2,
             "south_effective_irradiance_wm2": point.south_effective_irradiance_wm2,
             "north_direct_radiation_wm2": point.north_direct_radiation_wm2,
@@ -896,8 +1094,55 @@ class DummyOSSolarCoordinator:
             ):
                 self.last_horizon_candidate_evaluation[field] = self._horizon_candidate_snapshot.get(field)
 
+        self.last_partial_shading_candidate_evaluation = build_quarter_evaluation(
+            self._quarter_start,
+            self._partial_shading_candidate_snapshot,
+            self._energy_ws,
+            self._covered_seconds,
+            self._sample_count,
+            SOLAR_MIN_VALID_COVERAGE,
+        )
+        self.last_partial_shading_candidate_evaluation["candidate_model"] = (
+            SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL
+        )
+        self.last_partial_shading_candidate_evaluation["candidate_status"] = (
+            "locked"
+            if self._partial_shading_candidate_snapshot is not None
+            else "not_ready"
+        )
+        self.last_partial_shading_candidate_evaluation["horizon_candidate_model"] = (
+            SOLAR_HORIZON_CANDIDATE_MODEL
+        )
+        if self._partial_shading_candidate_snapshot is not None:
+            for field in (
+                "solar_azimuth_deg",
+                "solar_elevation_deg",
+                "north_horizon_elevation_deg",
+                "south_horizon_elevation_deg",
+                "north_horizon_blocked",
+                "south_horizon_blocked",
+                "north_partial_factor",
+                "south_partial_factor",
+                "north_effective_irradiance_wm2",
+                "south_effective_irradiance_wm2",
+                "north_direct_radiation_wm2",
+                "south_direct_radiation_wm2",
+                "north_diffuse_radiation_wm2",
+                "south_diffuse_radiation_wm2",
+                "north_ambient_temperature_c",
+                "south_ambient_temperature_c",
+                "north_cell_temperature_c",
+                "south_cell_temperature_c",
+                "north_temperature_factor",
+                "south_temperature_factor",
+            ):
+                self.last_partial_shading_candidate_evaluation[field] = (
+                    self._partial_shading_candidate_snapshot.get(field)
+                )
+
         self._record_temperature_ab_validation()
         self._record_multimodel_validation()
+        self._record_partial_shading_validation()
 
         slot_id = self._quarter_start.isoformat()
         due: list[tuple[str, dict[str, Any]]] = [
@@ -1054,6 +1299,61 @@ class DummyOSSolarCoordinator:
         summary["last_slot_id"] = self.multimodel_last_slot_id
         return summary
 
+    def _record_partial_shading_validation(self) -> None:
+        """Persist one exact-lock F5 horizon-simple versus partial sample."""
+        status, sample = build_partial_shading_pair(
+            self.last_horizon_candidate_evaluation,
+            self.last_partial_shading_candidate_evaluation,
+        )
+        self.partial_shading_last_pair_status = status
+        if status != "ok" or sample is None or self._quarter_start is None:
+            return
+
+        slot_id = str(sample["slot_id"])
+        if slot_id == self.partial_shading_last_slot_id:
+            return
+        if self.partial_shading_last_slot_id is not None:
+            try:
+                current_slot = datetime.fromisoformat(slot_id)
+                previous_slot = datetime.fromisoformat(
+                    self.partial_shading_last_slot_id
+                )
+                if current_slot <= previous_slot:
+                    return
+            except ValueError:
+                return
+
+        date_key = dt_util.as_local(self._quarter_start).date().isoformat()
+        day = next(
+            (
+                item
+                for item in self.partial_shading_history
+                if item.get("date") == date_key
+            ),
+            None,
+        )
+        if day is None:
+            day = new_partial_shading_day(date_key)
+            self.partial_shading_history.append(day)
+        add_partial_shading_sample(day, sample)
+        self.partial_shading_history.sort(key=lambda item: str(item.get("date")))
+        self.partial_shading_history = self.partial_shading_history[-MAX_HISTORY_DAYS:]
+        self.partial_shading_last_slot_id = slot_id
+
+    @property
+    def partial_shading_validation_summary(self) -> dict[str, Any]:
+        """Return persistent F5 evidence without winner/promotion logic."""
+        summary = summarize_partial_shading_history(self.partial_shading_history)
+        summary["status"] = (
+            "collecting"
+            if int(summary.get("sample_count", 0)) > 0
+            else "waiting_for_valid_pair"
+        )
+        summary["phase"] = "F5"
+        summary["last_pair_status"] = self.partial_shading_last_pair_status
+        summary["last_slot_id"] = self.partial_shading_last_slot_id
+        return summary
+
     def _storage_data(self) -> dict[str, Any]:
         """Return compact JSON-safe evaluation state."""
         active = None
@@ -1063,6 +1363,7 @@ class DummyOSSolarCoordinator:
                 "forecast_snapshot": self._forecast_snapshot,
                 "temperature_candidate_snapshot": self._temperature_candidate_snapshot,
                 "horizon_candidate_snapshot": self._horizon_candidate_snapshot,
+                "partial_shading_candidate_snapshot": self._partial_shading_candidate_snapshot,
                 "energy_ws": dict(self._energy_ws),
                 "covered_seconds": dict(self._covered_seconds),
                 "sample_count": self._sample_count,
@@ -1072,12 +1373,16 @@ class DummyOSSolarCoordinator:
             "last_evaluation": self.last_evaluation,
             "last_temperature_candidate_evaluation": self.last_temperature_candidate_evaluation,
             "last_horizon_candidate_evaluation": self.last_horizon_candidate_evaluation,
+            "last_partial_shading_candidate_evaluation": self.last_partial_shading_candidate_evaluation,
             "temperature_ab_history": self.temperature_ab_history,
             "temperature_ab_last_pair_status": self.temperature_ab_last_pair_status,
             "temperature_ab_last_slot_id": self.temperature_ab_last_slot_id,
             "multimodel_history": self.multimodel_history,
             "multimodel_last_pair_status": self.multimodel_last_pair_status,
             "multimodel_last_slot_id": self.multimodel_last_slot_id,
+            "partial_shading_history": self.partial_shading_history,
+            "partial_shading_last_pair_status": self.partial_shading_last_pair_status,
+            "partial_shading_last_slot_id": self.partial_shading_last_slot_id,
             "last_horizon_evaluations": self.last_horizon_evaluations,
             "horizon_snapshots": self._horizon_snapshots,
         }
@@ -1373,6 +1678,123 @@ class DummyOSSolarCoordinator:
             self._horizon_candidate_points = []
             self.horizon_candidate_last_error = f"{type(err).__name__}: {err}"
 
+        # F5 is isolated from raw/F1/F3/F4. It reuses the exact F3
+        # geometry/horizon trigger and adds only the experimental partial factor.
+        try:
+            if len(self._horizon_candidate_points) < FORECAST_SLOTS:
+                raise ValueError("F3 horizon candidate must be ready before F5")
+
+            partial_points: list[SolarPartialShadingCandidatePoint] = []
+            for horizon_point in self._horizon_candidate_points:
+                north_effective, north_partial_factor = (
+                    partial_shading_effective_irradiance_wm2(
+                        horizon_point.north_gti_wm2,
+                        horizon_point.north_diffuse_radiation_wm2,
+                        horizon_point.north_direct_radiation_wm2,
+                        horizon_point.north_horizon_blocked,
+                    )
+                )
+                south_effective, south_partial_factor = (
+                    partial_shading_effective_irradiance_wm2(
+                        horizon_point.south_gti_wm2,
+                        horizon_point.south_diffuse_radiation_wm2,
+                        horizon_point.south_direct_radiation_wm2,
+                        horizon_point.south_horizon_blocked,
+                    )
+                )
+                if None in (
+                    north_effective,
+                    south_effective,
+                    north_partial_factor,
+                    south_partial_factor,
+                ):
+                    raise ValueError(
+                        f"Invalid F5 partial irradiance at {horizon_point.start.isoformat()}"
+                    )
+
+                north_cell = cell_temperature_c(
+                    horizon_point.north_ambient_temperature_c,
+                    north_effective,
+                )
+                south_cell = cell_temperature_c(
+                    horizon_point.south_ambient_temperature_c,
+                    south_effective,
+                )
+                north_temp_factor = temperature_factor(north_cell)
+                south_temp_factor = temperature_factor(south_cell)
+                north_kw = temperature_corrected_pv_power_kw(
+                    north_effective,
+                    horizon_point.north_ambient_temperature_c,
+                    self.north.dc_capacity_kwp,
+                    self.north.ac_limit_kw,
+                    self.north.performance_factor,
+                )
+                south_kw = temperature_corrected_pv_power_kw(
+                    south_effective,
+                    horizon_point.south_ambient_temperature_c,
+                    self.south.dc_capacity_kwp,
+                    self.south.ac_limit_kw,
+                    self.south.performance_factor,
+                )
+                if None in (
+                    north_cell,
+                    south_cell,
+                    north_temp_factor,
+                    south_temp_factor,
+                    north_kw,
+                    south_kw,
+                ):
+                    raise ValueError(
+                        f"Invalid F5 temperature/power inputs at {horizon_point.start.isoformat()}"
+                    )
+                north_kwh = slot_energy_kwh(north_kw)
+                south_kwh = slot_energy_kwh(south_kw)
+                partial_points.append(
+                    SolarPartialShadingCandidatePoint(
+                        start=horizon_point.start,
+                        north_kwh=north_kwh,
+                        south_kwh=south_kwh,
+                        total_kwh=round(north_kwh + south_kwh, 6),
+                        north_kw=north_kw,
+                        south_kw=south_kw,
+                        total_kw=round(north_kw + south_kw, 6),
+                        north_gti_wm2=horizon_point.north_gti_wm2,
+                        south_gti_wm2=horizon_point.south_gti_wm2,
+                        north_direct_radiation_wm2=horizon_point.north_direct_radiation_wm2,
+                        south_direct_radiation_wm2=horizon_point.south_direct_radiation_wm2,
+                        north_diffuse_radiation_wm2=horizon_point.north_diffuse_radiation_wm2,
+                        south_diffuse_radiation_wm2=horizon_point.south_diffuse_radiation_wm2,
+                        solar_azimuth_deg=horizon_point.solar_azimuth_deg,
+                        solar_elevation_deg=horizon_point.solar_elevation_deg,
+                        north_horizon_elevation_deg=horizon_point.north_horizon_elevation_deg,
+                        south_horizon_elevation_deg=horizon_point.south_horizon_elevation_deg,
+                        north_horizon_blocked=horizon_point.north_horizon_blocked,
+                        south_horizon_blocked=horizon_point.south_horizon_blocked,
+                        north_partial_factor=north_partial_factor,
+                        south_partial_factor=south_partial_factor,
+                        north_effective_irradiance_wm2=north_effective,
+                        south_effective_irradiance_wm2=south_effective,
+                        north_ambient_temperature_c=horizon_point.north_ambient_temperature_c,
+                        south_ambient_temperature_c=horizon_point.south_ambient_temperature_c,
+                        north_cell_temperature_c=north_cell,
+                        south_cell_temperature_c=south_cell,
+                        north_temperature_factor=north_temp_factor,
+                        south_temperature_factor=south_temp_factor,
+                    )
+                )
+            if len(partial_points) < FORECAST_SLOTS:
+                raise ValueError(
+                    f"F5 partial shading candidate produced {len(partial_points)} aligned slots; "
+                    f"expected at least {FORECAST_SLOTS}"
+                )
+            self._partial_shading_candidate_points = partial_points
+            self.partial_shading_candidate_last_error = None
+        except (ValueError, TypeError, KeyError) as err:
+            self._partial_shading_candidate_points = []
+            self.partial_shading_candidate_last_error = (
+                f"{type(err).__name__}: {err}"
+            )
+
         self.source_generation_time_ms = {
             "north": self._as_float(north_payload.get("generationtime_ms")),
             "south": self._as_float(south_payload.get("generationtime_ms")),
@@ -1595,6 +2017,20 @@ class DummyOSSolarCoordinator:
         if self.last_successful_update is None:
             return None
         return round(max(0.0, (dt_util.utcnow() - self.last_successful_update).total_seconds()) / 60.0, 1)
+
+    def partial_shading_candidate_next_quarter_point(
+        self,
+    ) -> SolarPartialShadingCandidatePoint | None:
+        points = self.partial_shading_candidate_points
+        if not points:
+            return None
+        starts = [point.start for point in points]
+        index = next_future_slot_index(
+            starts,
+            dt_util.as_utc(dt_util.utcnow()),
+            SOLAR_RESOLUTION_MINUTES,
+        )
+        return points[index] if index is not None else None
 
     @property
     def source_status(self) -> str:

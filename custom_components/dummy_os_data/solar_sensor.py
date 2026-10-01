@@ -16,6 +16,7 @@ from .const import DOMAIN, FORECAST_SLOTS, NAME, SOLAR_MIN_VALID_COVERAGE, VERSI
 from .solar import (
     OPEN_METEO_SOLAR_MODEL,
     SOLAR_HORIZON_CANDIDATE_MODEL,
+    SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL,
     SOLAR_HORIZON_HOURS,
     SOLAR_RESOLUTION_MINUTES,
     SOLAR_TEMPERATURE_CANDIDATE_MODEL,
@@ -40,6 +41,10 @@ def build_solar_sensors(coordinator) -> list[SensorEntity]:
         DummyOSSolarHorizonCandidateNextQuarterSensor(coordinator),
         DummyOSSolarHorizonCandidateLastCompletedQuarterSensor(coordinator),
         DummyOSSolarMultiModelValidationSensor(coordinator),
+        DummyOSSolarPartialShadingCandidateTimelineSensor(coordinator),
+        DummyOSSolarPartialShadingCandidateNextQuarterSensor(coordinator),
+        DummyOSSolarPartialShadingCandidateLastCompletedQuarterSensor(coordinator),
+        DummyOSSolarPartialShadingValidationSensor(coordinator),
         DummyOSSolarDailySensor(coordinator, "today", "north"),
         DummyOSSolarDailySensor(coordinator, "today", "south"),
         DummyOSSolarDailySensor(coordinator, "today", "total"),
@@ -129,6 +134,13 @@ class DummyOSSolarStatusSensor(DummyOSSolarBaseSensor):
             "horizon_candidate_status": self.solar.horizon_candidate_status,
             "horizon_candidate_point_count": len(self.solar.horizon_candidate_points),
             "horizon_candidate_last_error": self.solar.horizon_candidate_last_error,
+            "partial_shading_candidate_status": self.solar.partial_shading_candidate_status,
+            "partial_shading_candidate_point_count": len(
+                self.solar.partial_shading_candidate_points
+            ),
+            "partial_shading_candidate_last_error": (
+                self.solar.partial_shading_candidate_last_error
+            ),
             "mode": "observation_parallel",
         }
 
@@ -393,6 +405,200 @@ class DummyOSSolarMultiModelValidationSensor(DummyOSSolarBaseSensor):
             "scope": (
                 "F4 exact-lock raw vs temperature vs horizon validation only; "
                 "no forecast-formula change"
+            ),
+        }
+
+
+class DummyOSSolarPartialShadingCandidateTimelineSensor(DummyOSSolarBaseSensor):
+    """Expose F5 experimental partial-shading observer timeline."""
+
+    _attr_name = "DO Solar Partial Shading Candidate Timeline"
+    _attr_unique_id = "do_solar_partial_shading_candidate_timeline"
+    _attr_suggested_object_id = "do_solar_partial_shading_candidate_timeline"
+    _attr_icon = "mdi:weather-partly-cloudy"
+    _unrecorded_attributes = frozenset({"points"})
+
+    @property
+    def native_value(self) -> int:
+        return len(self.solar.partial_shading_candidate_points)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        points = self.solar.partial_shading_candidate_points
+        return {
+            "phase": "F5",
+            "candidate_status": self.solar.partial_shading_candidate_status,
+            "candidate_role": "parallel_observer",
+            "source": "open_meteo",
+            "attribution": "Weather data by Open-Meteo.com",
+            "model": SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL,
+            "horizon_reference_model": SOLAR_HORIZON_CANDIDATE_MODEL,
+            "resolution_minutes": SOLAR_RESOLUTION_MINUTES,
+            "horizon_hours": 72,
+            "slot_count": FORECAST_SLOTS,
+            "point_count": len(points),
+            "source_buffer_point_count": (
+                self.solar.partial_shading_candidate_source_point_count
+            ),
+            "last_error": self.solar.partial_shading_candidate_last_error,
+            "partial_shading_semantics": (
+                "only when F3 horizon_blocked; factor=diffuse/(diffuse+direct); "
+                "effective=diffuse*factor; unblocked=GTI"
+            ),
+            "fallback_when_diffuse_plus_direct_zero": "factor=1",
+            "horizon_trigger": "reuses_F3_per_array_physical_horizon",
+            "ac_cap_semantics": "existing_energy_per_array_ac_limit_kw_unchanged",
+            "point_format": (
+                "[unix_ms,north_kwh,south_kwh,total_kwh,north_kw,south_kw,total_kw,"
+                "north_gti,south_gti,north_direct,south_direct,north_diffuse,south_diffuse,"
+                "solar_azimuth,solar_elevation,north_horizon,south_horizon,"
+                "north_blocked,south_blocked,north_partial_factor,south_partial_factor,"
+                "north_effective,south_effective,north_ambient,south_ambient,"
+                "north_cell,south_cell,north_temp_factor,south_temp_factor]"
+            ),
+            "forecast_start": points[0].start.isoformat() if points else None,
+            "last_slot_start": points[-1].start.isoformat() if points else None,
+            "forecast_end": (
+                (
+                    points[-1].start
+                    + timedelta(minutes=SOLAR_RESOLUTION_MINUTES)
+                ).isoformat()
+                if points
+                else None
+            ),
+            "recorder_points": "excluded",
+            "promotion_authority": False,
+            "points": [point.as_list() for point in points],
+        }
+
+
+class DummyOSSolarPartialShadingCandidateNextQuarterSensor(DummyOSSolarBaseSensor):
+    """Expose the first future F5 observer slot."""
+
+    _attr_name = "DO Solar Partial Shading Candidate Next Quarter"
+    _attr_unique_id = "do_solar_partial_shading_candidate_next_quarter"
+    _attr_suggested_object_id = "do_solar_partial_shading_candidate_next_quarter"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_icon = "mdi:weather-partly-cloudy"
+
+    @property
+    def native_value(self) -> float | None:
+        point = self.solar.partial_shading_candidate_next_quarter_point()
+        return point.total_kwh if point else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        point = self.solar.partial_shading_candidate_next_quarter_point()
+        if point is None:
+            return {
+                "phase": "F5",
+                "candidate_status": self.solar.partial_shading_candidate_status,
+                "last_error": self.solar.partial_shading_candidate_last_error,
+                "model": SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL,
+                "promotion_authority": False,
+            }
+        return {
+            "phase": "F5",
+            "candidate_status": self.solar.partial_shading_candidate_status,
+            "model": SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL,
+            "start": point.start.isoformat(),
+            "north_kwh": point.north_kwh,
+            "south_kwh": point.south_kwh,
+            "solar_azimuth_deg": point.solar_azimuth_deg,
+            "solar_elevation_deg": point.solar_elevation_deg,
+            "north_horizon_elevation_deg": point.north_horizon_elevation_deg,
+            "south_horizon_elevation_deg": point.south_horizon_elevation_deg,
+            "north_horizon_blocked": point.north_horizon_blocked,
+            "south_horizon_blocked": point.south_horizon_blocked,
+            "north_partial_factor": point.north_partial_factor,
+            "south_partial_factor": point.south_partial_factor,
+            "north_gti_wm2": point.north_gti_wm2,
+            "south_gti_wm2": point.south_gti_wm2,
+            "north_direct_radiation_wm2": point.north_direct_radiation_wm2,
+            "south_direct_radiation_wm2": point.south_direct_radiation_wm2,
+            "north_diffuse_radiation_wm2": point.north_diffuse_radiation_wm2,
+            "south_diffuse_radiation_wm2": point.south_diffuse_radiation_wm2,
+            "north_effective_irradiance_wm2": point.north_effective_irradiance_wm2,
+            "south_effective_irradiance_wm2": point.south_effective_irradiance_wm2,
+            "selection": "first_future_slot",
+            "promotion_authority": False,
+        }
+
+
+class DummyOSSolarPartialShadingCandidateLastCompletedQuarterSensor(
+    DummyOSSolarBaseSensor
+):
+    """Expose locked F5 observer versus the completed actual quarter."""
+
+    _attr_name = "DO Solar Partial Shading Candidate Evaluation Last Completed Quarter"
+    _attr_unique_id = "do_solar_partial_shading_candidate_evaluation_last_completed_quarter"
+    _attr_suggested_object_id = "do_solar_partial_shading_candidate_evaluation_last_completed_quarter"
+    _attr_icon = "mdi:chart-bell-curve-cumulative"
+
+    @property
+    def native_value(self) -> str | None:
+        evaluation = self.solar.last_partial_shading_candidate_evaluation
+        return evaluation.get("slot_id") if evaluation else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        evaluation = self.solar.last_partial_shading_candidate_evaluation
+        if evaluation is None:
+            return {
+                "phase": "F5",
+                "status": "waiting_for_first_completed_quarter",
+                "candidate_status": self.solar.partial_shading_candidate_status,
+                "model": SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL,
+                "resolution_minutes": SOLAR_RESOLUTION_MINUTES,
+                "minimum_coverage_percent": SOLAR_MIN_VALID_COVERAGE * 100.0,
+                "promotion_authority": False,
+            }
+        result = dict(evaluation)
+        result["phase"] = "F5"
+        result["promotion_authority"] = False
+        return result
+
+
+class DummyOSSolarPartialShadingValidationSensor(DummyOSSolarBaseSensor):
+    """Expose persistent F5 horizon-simple versus partial validation."""
+
+    _attr_name = "DO Solar Partial Shading Validation"
+    _attr_unique_id = "do_solar_partial_shading_validation"
+    _attr_suggested_object_id = "do_solar_partial_shading_validation"
+    _attr_icon = "mdi:compare-horizontal"
+    _unrecorded_attributes = frozenset({"recent_days"})
+
+    @property
+    def native_value(self) -> int:
+        summary = self.solar.partial_shading_validation_summary
+        return int(summary.get("sample_count", 0))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        summary = self.solar.partial_shading_validation_summary
+        return {
+            "phase": "F5",
+            "role": "partial_shading_validation",
+            "status": summary.get("status"),
+            "sample_count": summary.get("sample_count"),
+            "day_count": summary.get("day_count"),
+            "first_date": summary.get("first_date"),
+            "last_date": summary.get("last_date"),
+            "last_pair_status": summary.get("last_pair_status"),
+            "last_slot_id": summary.get("last_slot_id"),
+            "horizon_model": SOLAR_HORIZON_CANDIDATE_MODEL,
+            "partial_model": SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL,
+            "minimum_coverage_percent": SOLAR_MIN_VALID_COVERAGE * 100.0,
+            "metrics": summary.get("components"),
+            "recent_days": summary.get("recent_days"),
+            "effect_scope": (
+                "blocked_effect is evaluated separately per roof; total blocked "
+                "when either roof horizon trigger is active"
+            ),
+            "promotion_authority": False,
+            "scope": (
+                "F5 exact-lock horizon-simple vs partial observer validation only"
             ),
         }
 
