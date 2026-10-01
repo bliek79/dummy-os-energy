@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - '.github/workflows/publish-alpha48.yml'
+      - '.github/workflows/publish-alpha49.yml'
 
 permissions:
   contents: write
