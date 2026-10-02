@@ -260,12 +260,12 @@ def _summarize_metrics(total: Mapping[str, Any]) -> dict[str, Any]:
         "parent_absolute_error_kwh": round(parent_abs, 6),
         "learned_absolute_error_kwh": round(learned_abs, 6),
         "parent_bias_percent": (
-            round(100.0 * parent_error / actual)
+            round(100.0 * parent_error / actual, 2)
             if denominator_ok
             else None
         ),
         "learned_bias_percent": (
-            round(100.0 * learned_error / actual)
+            round(100.0 * learned_error / actual, 2)
             if denominator_ok
             else None
         ),
