@@ -17,6 +17,7 @@ from .solar import (
     OPEN_METEO_SOLAR_MODEL,
     SOLAR_HORIZON_CANDIDATE_MODEL,
     SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL,
+    SOLAR_RESIDUAL_LEARNING_CANDIDATE_MODEL,
     SOLAR_HORIZON_HOURS,
     SOLAR_RESOLUTION_MINUTES,
     SOLAR_TEMPERATURE_CANDIDATE_MODEL,
@@ -45,6 +46,11 @@ def build_solar_sensors(coordinator) -> list[SensorEntity]:
         DummyOSSolarPartialShadingCandidateNextQuarterSensor(coordinator),
         DummyOSSolarPartialShadingCandidateLastCompletedQuarterSensor(coordinator),
         DummyOSSolarPartialShadingValidationSensor(coordinator),
+        DummyOSSolarResidualLearningStatusSensor(coordinator),
+        DummyOSSolarResidualLearningCandidateTimelineSensor(coordinator),
+        DummyOSSolarResidualLearningCandidateNextQuarterSensor(coordinator),
+        DummyOSSolarResidualLearningCandidateLastCompletedQuarterSensor(coordinator),
+        DummyOSSolarResidualLearningValidationSensor(coordinator),
         DummyOSSolarDailySensor(coordinator, "today", "north"),
         DummyOSSolarDailySensor(coordinator, "today", "south"),
         DummyOSSolarDailySensor(coordinator, "today", "total"),
@@ -599,6 +605,228 @@ class DummyOSSolarPartialShadingValidationSensor(DummyOSSolarBaseSensor):
             "promotion_authority": False,
             "scope": (
                 "F5 exact-lock horizon-simple vs partial observer validation only"
+            ),
+        }
+
+
+class DummyOSSolarResidualLearningStatusSensor(DummyOSSolarBaseSensor):
+    """Expose compact F6 learner health and qualification state."""
+
+    _attr_name = "DO Solar Residual Learning Status"
+    _attr_unique_id = "do_solar_residual_learning_status"
+    _attr_suggested_object_id = "do_solar_residual_learning_status"
+    _attr_icon = "mdi:brain"
+
+    @property
+    def native_value(self) -> str:
+        return self.solar.residual_learning_mode
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self.solar.residual_learning_status_summary)
+
+
+class DummyOSSolarResidualLearningCandidateTimelineSensor(DummyOSSolarBaseSensor):
+    """Expose the F6 learned candidate without replacing any physical model."""
+
+    _attr_name = "DO Solar Residual Learning Candidate Timeline"
+    _attr_unique_id = "do_solar_residual_learning_candidate_timeline"
+    _attr_suggested_object_id = "do_solar_residual_learning_candidate_timeline"
+    _attr_icon = "mdi:chart-timeline-variant-shimmer"
+    _unrecorded_attributes = frozenset({"points"})
+
+    @property
+    def native_value(self) -> int:
+        return len(self.solar.residual_learning_candidate_points)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        points = self.solar.residual_learning_candidate_points
+        status = self.solar.residual_learning_status_summary
+        return {
+            "phase": "F6",
+            "candidate_status": self.solar.residual_learning_candidate_status,
+            "candidate_role": "parallel_observer",
+            "source": "open_meteo",
+            "attribution": "Weather data by Open-Meteo.com",
+            "model": SOLAR_RESIDUAL_LEARNING_CANDIDATE_MODEL,
+            "parent_model": status.get("parent_model"),
+            "parent_signature": status.get("parent_signature"),
+            "model_revision": status.get("model_revision"),
+            "learner_mode": status.get("mode"),
+            "resolution_minutes": SOLAR_RESOLUTION_MINUTES,
+            "horizon_hours": 72,
+            "slot_count": FORECAST_SLOTS,
+            "point_count": len(points),
+            "source_buffer_point_count": (
+                self.solar.residual_learning_candidate_source_point_count
+            ),
+            "last_error": self.solar.residual_learning_candidate_last_error,
+            "factor_semantics": (
+                "qualified condition-bin median residual ratio only; "
+                "all insufficient/unstable/saturated/invalid states use 1.0"
+            ),
+            "ac_cap_semantics": (
+                "existing Energy per-array ac_limit_kw reapplied after factor"
+            ),
+            "point_format": (
+                "[unix_ms,north_kwh,south_kwh,total_kwh,north_kw,south_kw,total_kw,"
+                "parent_north_kwh,parent_south_kwh,parent_total_kwh,"
+                "solar_azimuth,solar_elevation,elevation_band,azimuth_sector,"
+                "weather_regime,north_bin,south_bin,north_bin_status,south_bin_status,"
+                "north_factor,south_factor,model_revision,parent_signature]"
+            ),
+            "forecast_start": points[0].start.isoformat() if points else None,
+            "last_slot_start": points[-1].start.isoformat() if points else None,
+            "forecast_end": (
+                (
+                    points[-1].start
+                    + timedelta(minutes=SOLAR_RESOLUTION_MINUTES)
+                ).isoformat()
+                if points
+                else None
+            ),
+            "recorder_points": "excluded",
+            "promotion_authority": False,
+            "points": [point.as_list() for point in points],
+        }
+
+
+class DummyOSSolarResidualLearningCandidateNextQuarterSensor(DummyOSSolarBaseSensor):
+    """Expose the first future F6 slot and its frozen learning decision."""
+
+    _attr_name = "DO Solar Residual Learning Candidate Next Quarter"
+    _attr_unique_id = "do_solar_residual_learning_candidate_next_quarter"
+    _attr_suggested_object_id = "do_solar_residual_learning_candidate_next_quarter"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_icon = "mdi:solar-power-variant-outline"
+
+    @property
+    def native_value(self) -> float | None:
+        point = self.solar.residual_learning_candidate_next_quarter_point()
+        return point.total_kwh if point else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        point = self.solar.residual_learning_candidate_next_quarter_point()
+        if point is None:
+            return {
+                "phase": "F6",
+                "candidate_status": self.solar.residual_learning_candidate_status,
+                "last_error": self.solar.residual_learning_candidate_last_error,
+                "model": SOLAR_RESIDUAL_LEARNING_CANDIDATE_MODEL,
+                "promotion_authority": False,
+            }
+        return {
+            "phase": "F6",
+            "candidate_status": self.solar.residual_learning_candidate_status,
+            "model": SOLAR_RESIDUAL_LEARNING_CANDIDATE_MODEL,
+            "start": point.start.isoformat(),
+            "north_kwh": point.north_kwh,
+            "south_kwh": point.south_kwh,
+            "parent_north_kwh": point.parent_north_kwh,
+            "parent_south_kwh": point.parent_south_kwh,
+            "solar_azimuth_deg": point.solar_azimuth_deg,
+            "solar_elevation_deg": point.solar_elevation_deg,
+            "solar_elevation_band": point.solar_elevation_band,
+            "solar_azimuth_sector": point.solar_azimuth_sector,
+            "weather_regime": point.weather_regime,
+            "north_bin": point.north_bin,
+            "south_bin": point.south_bin,
+            "north_bin_status": point.north_bin_status,
+            "south_bin_status": point.south_bin_status,
+            "north_applied_factor": point.north_applied_factor,
+            "south_applied_factor": point.south_applied_factor,
+            "model_revision": point.model_revision,
+            "parent_signature": point.parent_signature,
+            "selection": "first_future_slot",
+            "promotion_authority": False,
+        }
+
+
+class DummyOSSolarResidualLearningCandidateLastCompletedQuarterSensor(
+    DummyOSSolarBaseSensor
+):
+    """Expose the immutable F6 lock versus actual."""
+
+    _attr_name = "DO Solar Residual Learning Candidate Evaluation Last Completed Quarter"
+    _attr_unique_id = "do_solar_residual_learning_candidate_evaluation_last_completed_quarter"
+    _attr_suggested_object_id = "do_solar_residual_learning_candidate_evaluation_last_completed_quarter"
+    _attr_icon = "mdi:chart-bell-curve-cumulative"
+
+    @property
+    def native_value(self) -> str | None:
+        evaluation = self.solar.last_residual_learning_candidate_evaluation
+        return evaluation.get("slot_id") if evaluation else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        evaluation = self.solar.last_residual_learning_candidate_evaluation
+        if evaluation is None:
+            return {
+                "phase": "F6",
+                "status": "waiting_for_first_completed_quarter",
+                "candidate_status": self.solar.residual_learning_candidate_status,
+                "model": SOLAR_RESIDUAL_LEARNING_CANDIDATE_MODEL,
+                "resolution_minutes": SOLAR_RESOLUTION_MINUTES,
+                "minimum_coverage_percent": SOLAR_MIN_VALID_COVERAGE * 100.0,
+                "promotion_authority": False,
+            }
+        result = dict(evaluation)
+        result["phase"] = "F6"
+        result["promotion_authority"] = False
+        return result
+
+
+class DummyOSSolarResidualLearningValidationSensor(DummyOSSolarBaseSensor):
+    """Expose persistent exact-lock F5 parent versus F6 learned validation."""
+
+    _attr_name = "DO Solar Residual Learning Validation"
+    _attr_unique_id = "do_solar_residual_learning_validation"
+    _attr_suggested_object_id = "do_solar_residual_learning_validation"
+    _attr_icon = "mdi:compare-horizontal"
+    _unrecorded_attributes = frozenset(
+        {"recent_days", "breakdown_by_condition_bin"}
+    )
+
+    @property
+    def native_value(self) -> int:
+        summary = self.solar.residual_learning_validation_summary
+        return int(summary.get("sample_count", 0))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        summary = self.solar.residual_learning_validation_summary
+        status = self.solar.residual_learning_status_summary
+        return {
+            "phase": "F6",
+            "role": "residual_learning_validation",
+            "status": summary.get("status"),
+            "sample_count": summary.get("sample_count"),
+            "daylight_sample_count": summary.get("daylight_sample_count"),
+            "day_count": summary.get("day_count"),
+            "daylight_day_count": summary.get("daylight_day_count"),
+            "first_date": summary.get("first_date"),
+            "last_date": summary.get("last_date"),
+            "last_pair_status": summary.get("last_pair_status"),
+            "last_slot_id": summary.get("last_slot_id"),
+            "parent_model": status.get("parent_model"),
+            "learned_model": SOLAR_RESIDUAL_LEARNING_CANDIDATE_MODEL,
+            "model_revision": status.get("model_revision"),
+            "metrics": summary.get("components"),
+            "breakdown_by_condition_bin": summary.get(
+                "breakdown_by_condition_bin"
+            ),
+            "recent_days": summary.get("recent_days"),
+            "exit_evidence": {
+                "minimum_complete_live_days": 14,
+                "minimum_daylight_ab_samples_per_array": 300,
+                "purpose": "F6-green/F7 assessment only; not a build gate",
+            },
+            "promotion_authority": False,
+            "scope": (
+                "F6 exact-lock F5-parent vs learned candidate validation only"
             ),
         }
 

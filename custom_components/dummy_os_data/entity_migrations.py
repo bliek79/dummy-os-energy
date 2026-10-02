@@ -35,6 +35,11 @@ SOLAR_GENERATED_ENTITY_ID_ALIASES: dict[str, str] = {
     "do_solar_partial_shading_candidate_next_quarter": "sensor.dummy_os_energy_do_solar_partial_shading_candidate_next_quarter",
     "do_solar_partial_shading_candidate_evaluation_last_completed_quarter": "sensor.dummy_os_energy_do_solar_partial_shading_candidate_evaluation_last_completed_quarter",
     "do_solar_partial_shading_validation": "sensor.dummy_os_energy_do_solar_partial_shading_validation",
+    "do_solar_residual_learning_status": "sensor.dummy_os_energy_do_solar_residual_learning_status",
+    "do_solar_residual_learning_candidate_timeline": "sensor.dummy_os_energy_do_solar_residual_learning_candidate_timeline",
+    "do_solar_residual_learning_candidate_next_quarter": "sensor.dummy_os_energy_do_solar_residual_learning_candidate_next_quarter",
+    "do_solar_residual_learning_candidate_evaluation_last_completed_quarter": "sensor.dummy_os_energy_do_solar_residual_learning_candidate_evaluation_last_completed_quarter",
+    "do_solar_residual_learning_validation": "sensor.dummy_os_energy_do_solar_residual_learning_validation",
 }
 
 DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES: dict[str, str] = {
