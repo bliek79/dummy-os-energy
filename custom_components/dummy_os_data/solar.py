@@ -56,6 +56,9 @@ from .solar_temperature_ab import (
 from .solar_multimodel_validation import (
     add_multimodel_sample,
     build_multimodel_pair,
+    classify_solar_azimuth,
+    classify_solar_elevation,
+    classify_weather_regime,
     new_multimodel_day,
     summarize_multimodel_history,
 )
@@ -64,6 +67,27 @@ from .solar_partial_shading_validation import (
     build_partial_shading_pair,
     new_partial_shading_day,
     summarize_partial_shading_history,
+)
+from .solar_residual_learning import (
+    F6_BIN_CONTRACT,
+    F6_MODEL,
+    F6_PARENT_MODEL,
+    add_training_sample,
+    apply_factor_with_ac_cap,
+    build_parent_signature,
+    build_revision,
+    build_training_sample,
+    condition_key,
+    factor_for_bin,
+    revision_diagnostics,
+    thresholds as residual_learning_thresholds,
+    validate_learning_state,
+)
+from .solar_residual_learning_validation import (
+    add_residual_learning_sample,
+    build_residual_learning_pair,
+    new_residual_learning_day,
+    summarize_residual_learning_history,
 )
 from .solar_model import (
     SOLAR_TEMPERATURE_ALPHA_REFERENCE,
@@ -99,6 +123,7 @@ SOLAR_HORIZON_HOURS = (1, 6, 24, 48, 72)
 SOLAR_TEMPERATURE_CANDIDATE_MODEL = "open_meteo_gti_temperature_candidate_v0.1"
 SOLAR_HORIZON_CANDIDATE_MODEL = "open_meteo_gti_horizon_temperature_candidate_v0.1"
 SOLAR_PARTIAL_SHADING_CANDIDATE_MODEL = "open_meteo_gti_horizon_partial_temperature_candidate_v0.1"
+SOLAR_RESIDUAL_LEARNING_CANDIDATE_MODEL = F6_MODEL
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +338,49 @@ class SolarPartialShadingCandidatePoint:
         ]
 
 
+@dataclass(frozen=True, slots=True)
+class SolarResidualLearningCandidatePoint:
+    """Parallel F6 residual-learning candidate above the frozen F5 parent."""
+
+    start: datetime
+    north_kwh: float
+    south_kwh: float
+    total_kwh: float
+    north_kw: float
+    south_kw: float
+    total_kw: float
+    parent_north_kwh: float
+    parent_south_kwh: float
+    parent_total_kwh: float
+    solar_azimuth_deg: float
+    solar_elevation_deg: float
+    solar_elevation_band: str | None
+    solar_azimuth_sector: str | None
+    weather_regime: str | None
+    north_bin: str | None
+    south_bin: str | None
+    north_bin_status: str
+    south_bin_status: str
+    north_applied_factor: float
+    south_applied_factor: float
+    model_revision: str
+    parent_signature: str
+
+    def as_list(self) -> list[int | float | str | None]:
+        return [
+            int(self.start.timestamp() * 1000),
+            self.north_kwh, self.south_kwh, self.total_kwh,
+            self.north_kw, self.south_kw, self.total_kw,
+            self.parent_north_kwh, self.parent_south_kwh, self.parent_total_kwh,
+            self.solar_azimuth_deg, self.solar_elevation_deg,
+            self.solar_elevation_band, self.solar_azimuth_sector, self.weather_regime,
+            self.north_bin, self.south_bin,
+            self.north_bin_status, self.south_bin_status,
+            self.north_applied_factor, self.south_applied_factor,
+            self.model_revision, self.parent_signature,
+        ]
+
+
 class DummyOSSolarCoordinator:
     """Fetch two roof forecasts and publish one source-neutral solar timeline."""
 
@@ -332,6 +400,17 @@ class DummyOSSolarCoordinator:
         self.partial_shading_history: list[dict[str, Any]] = []
         self.partial_shading_last_pair_status = "waiting"
         self.partial_shading_last_slot_id: str | None = None
+        self._residual_learning_candidate_points: list[
+            SolarResidualLearningCandidatePoint
+        ] = []
+        self.residual_learning_candidate_last_error: str | None = None
+        self.last_residual_learning_candidate_evaluation: dict[str, Any] | None = None
+        self._residual_learning_candidate_snapshot: dict[str, Any] | None = None
+        self.residual_learning_validation_history: list[dict[str, Any]] = []
+        self.residual_learning_last_pair_status = "waiting"
+        self.residual_learning_last_slot_id: str | None = None
+        self.residual_learning_state: dict[str, Any] = {}
+        self.residual_learning_state_status = "initializing"
         self.temperature_candidate_last_error: str | None = None
         self.last_temperature_candidate_evaluation: dict[str, Any] | None = None
         self._temperature_candidate_snapshot: dict[str, Any] | None = None
@@ -444,6 +523,95 @@ class DummyOSSolarCoordinator:
     @property
     def partial_shading_candidate_source_point_count(self) -> int:
         return len(self._partial_shading_candidate_points)
+
+    @property
+    def residual_learning_candidate_points(
+        self,
+    ) -> list[SolarResidualLearningCandidatePoint]:
+        """Return F6 candidate on the native rolling 72-hour window."""
+        if not self._residual_learning_candidate_points:
+            return []
+        local_now = dt_util.as_local(dt_util.utcnow())
+        cutoff = dt_util.as_utc(next_complete_slot(local_now, QUARTER_MINUTES))
+        return [
+            point for point in self._residual_learning_candidate_points
+            if point.start >= cutoff
+        ][:FORECAST_SLOTS]
+
+    @property
+    def residual_learning_candidate_status(self) -> str:
+        return (
+            "ready"
+            if len(self.residual_learning_candidate_points) == FORECAST_SLOTS
+            else "not_ready"
+        )
+
+    @property
+    def residual_learning_candidate_source_point_count(self) -> int:
+        return len(self._residual_learning_candidate_points)
+
+    @property
+    def residual_parent_signature(self) -> str:
+        """Fingerprint the frozen F5 physical parent semantics."""
+        return build_parent_signature(
+            {
+                "parent_model": F6_PARENT_MODEL,
+                "north": {
+                    "dc_capacity_kwp": self.north.dc_capacity_kwp,
+                    "ac_limit_kw": self.north.ac_limit_kw,
+                    "tilt_deg": self.north.tilt_deg,
+                    "open_meteo_azimuth_deg": self.north.open_meteo_azimuth_deg,
+                    "performance_factor": self.north.performance_factor,
+                    "horizon_profile": self.north_horizon_profile,
+                },
+                "south": {
+                    "dc_capacity_kwp": self.south.dc_capacity_kwp,
+                    "ac_limit_kw": self.south.ac_limit_kw,
+                    "tilt_deg": self.south.tilt_deg,
+                    "open_meteo_azimuth_deg": self.south.open_meteo_azimuth_deg,
+                    "performance_factor": self.south.performance_factor,
+                    "horizon_profile": self.south_horizon_profile,
+                },
+                "partial_rule": "blocked diffuse share; unblocked GTI",
+                "temperature_model": "F1_Ross_temperature_v0.1",
+                "ac_cap": "existing_per_array_ac_limit_kw",
+                "resolution_minutes": SOLAR_RESOLUTION_MINUTES,
+            }
+        )
+
+    @property
+    def residual_learning_revision(self) -> dict[str, Any]:
+        revision = self.residual_learning_state.get("revision", {})
+        return dict(revision) if isinstance(revision, dict) else {}
+
+    @property
+    def residual_learning_mode(self) -> str:
+        if (
+            self.north_horizon_profile is None
+            or self.south_horizon_profile is None
+            or self.partial_shading_candidate_status != "ready"
+        ):
+            return "blocked_physical_gate"
+        if not isinstance(self.residual_learning_state, dict):
+            return "fallback_parent"
+        return "candidate_observe"
+
+    @property
+    def residual_learning_status_summary(self) -> dict[str, Any]:
+        revision = self.residual_learning_revision
+        return {
+            "phase": "F6",
+            "mode": self.residual_learning_mode,
+            "state_status": self.residual_learning_state_status,
+            "parent_model": F6_PARENT_MODEL,
+            "parent_signature": self.residual_parent_signature,
+            "model_revision": revision.get("model_revision"),
+            "training_cutoff": revision.get("training_cutoff"),
+            "bin_contract": F6_BIN_CONTRACT,
+            "thresholds": residual_learning_thresholds(),
+            **revision_diagnostics(revision),
+            "promotion_authority": False,
+        }
 
     @property
     def planner_points(self) -> list[SolarPoint]:
