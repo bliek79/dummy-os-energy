@@ -776,6 +776,42 @@ class DummyOSSolarCoordinator:
         if isinstance(raw_partial_slot, str):
             self.partial_shading_last_slot_id = raw_partial_slot
 
+        raw_residual_candidate_evaluation = stored.get(
+            "last_residual_learning_candidate_evaluation"
+        )
+        self.last_residual_learning_candidate_evaluation = (
+            raw_residual_candidate_evaluation
+            if isinstance(raw_residual_candidate_evaluation, dict)
+            else None
+        )
+        raw_residual_history = stored.get("residual_learning_validation_history")
+        if isinstance(raw_residual_history, list):
+            self.residual_learning_validation_history = sorted(
+                [
+                    item
+                    for item in raw_residual_history
+                    if isinstance(item, dict) and isinstance(item.get("date"), str)
+                ],
+                key=lambda item: str(item.get("date")),
+            )[-MAX_HISTORY_DAYS:]
+        raw_residual_pair_status = stored.get("residual_learning_last_pair_status")
+        if isinstance(raw_residual_pair_status, str):
+            self.residual_learning_last_pair_status = raw_residual_pair_status
+        raw_residual_slot = stored.get("residual_learning_last_slot_id")
+        if isinstance(raw_residual_slot, str):
+            self.residual_learning_last_slot_id = raw_residual_slot
+
+        state_ok, learning_state = validate_learning_state(
+            stored.get("residual_learning_state"),
+            F6_PARENT_MODEL,
+            self.residual_parent_signature,
+        )
+        self.residual_learning_state = learning_state
+        self.residual_learning_state_status = (
+            "restored" if state_ok else "initialized_safe_fallback"
+        )
+        self._maybe_build_residual_revision(dt_util.utcnow())
+
         raw_horizon_evaluations = stored.get("last_horizon_evaluations")
         if isinstance(raw_horizon_evaluations, list):
             self.last_horizon_evaluations = [
@@ -846,6 +882,8 @@ class DummyOSSolarCoordinator:
         boundary_utc = floor_slot_start(now_utc, QUARTER_MINUTES)
         self._integrate_actual_until(boundary_utc)
         self._finalize_quarter(boundary_utc)
+        if self._maybe_build_residual_revision(boundary_utc):
+            self._rebuild_residual_learning_candidate()
         self._capture_horizon_snapshots(boundary_utc)
         if self.last_evaluation is not None:
             self.last_evaluation["pending_horizon_snapshot_count"] = len(self._horizon_snapshots)
@@ -886,6 +924,11 @@ class DummyOSSolarCoordinator:
             self._partial_shading_candidate_snapshot = (
                 stored.get("partial_shading_candidate_snapshot")
                 if isinstance(stored.get("partial_shading_candidate_snapshot"), dict)
+                else None
+            )
+            self._residual_learning_candidate_snapshot = (
+                stored.get("residual_learning_candidate_snapshot")
+                if isinstance(stored.get("residual_learning_candidate_snapshot"), dict)
                 else None
             )
             for roof in ROOFS:
@@ -939,6 +982,12 @@ class DummyOSSolarCoordinator:
         )
         self._partial_shading_candidate_snapshot = (
             self._partial_shading_candidate_snapshot_for_slot(
+                self._quarter_start,
+                captured_at,
+            )
+        )
+        self._residual_learning_candidate_snapshot = (
+            self._residual_learning_candidate_snapshot_for_slot(
                 self._quarter_start,
                 captured_at,
             )
@@ -1050,6 +1099,7 @@ class DummyOSSolarCoordinator:
             "model": SOLAR_HORIZON_CANDIDATE_MODEL,
             "source_update": self.last_successful_update.isoformat() if self.last_successful_update else None,
             "captured_at": captured.isoformat(),
+            "physical_parent_signature": self.residual_parent_signature,
             "solar_azimuth_deg": point.solar_azimuth_deg,
             "solar_elevation_deg": point.solar_elevation_deg,
             "north_horizon_elevation_deg": point.north_horizon_elevation_deg,
@@ -1122,6 +1172,74 @@ class DummyOSSolarCoordinator:
             "north_temperature_factor": point.north_temperature_factor,
             "south_temperature_factor": point.south_temperature_factor,
         }
+
+    def _residual_learning_candidate_snapshot_for_slot(
+        self,
+        slot_start: datetime,
+        captured_at: datetime,
+    ) -> dict[str, Any] | None:
+        """Freeze the F6 revision and factors before target-slot actuals exist."""
+        point = next(
+            (
+                item
+                for item in self._residual_learning_candidate_points
+                if item.start == dt_util.as_utc(slot_start)
+            ),
+            None,
+        )
+        captured = dt_util.as_utc(captured_at)
+        if point is None or captured > dt_util.as_utc(slot_start):
+            return None
+        return {
+            "start": point.start.isoformat(),
+            "end": (
+                point.start + timedelta(minutes=QUARTER_MINUTES)
+            ).isoformat(),
+            "north_kwh": point.north_kwh,
+            "south_kwh": point.south_kwh,
+            "total_kwh": point.total_kwh,
+            "provider": "open_meteo",
+            "model": SOLAR_RESIDUAL_LEARNING_CANDIDATE_MODEL,
+            "parent_model": F6_PARENT_MODEL,
+            "parent_signature": point.parent_signature,
+            "source_update": (
+                self.last_successful_update.isoformat()
+                if self.last_successful_update
+                else None
+            ),
+            "captured_at": captured.isoformat(),
+            "model_revision": point.model_revision,
+            "solar_azimuth_deg": point.solar_azimuth_deg,
+            "solar_elevation_deg": point.solar_elevation_deg,
+            "solar_elevation_band": point.solar_elevation_band,
+            "solar_azimuth_sector": point.solar_azimuth_sector,
+            "weather_regime": point.weather_regime,
+            "north_bin": point.north_bin,
+            "south_bin": point.south_bin,
+            "north_bin_status": point.north_bin_status,
+            "south_bin_status": point.south_bin_status,
+            "north_applied_factor": point.north_applied_factor,
+            "south_applied_factor": point.south_applied_factor,
+            "parent_north_kwh": point.parent_north_kwh,
+            "parent_south_kwh": point.parent_south_kwh,
+            "parent_total_kwh": point.parent_total_kwh,
+        }
+
+    def _maybe_build_residual_revision(self, now_utc: datetime) -> bool:
+        """Fit at most once for each closed local calendar day."""
+        local_now = dt_util.as_local(now_utc)
+        local_date = local_now.date().isoformat()
+        if self.residual_learning_state.get("last_revision_local_date") == local_date:
+            return False
+        local_midnight = local_now.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        build_revision(
+            self.residual_learning_state,
+            training_cutoff=local_midnight.isoformat(),
+            cutoff_local_date=local_date,
+        )
+        return True
 
     def _capture_horizon_snapshots(self, captured_at: datetime) -> None:
         """Freeze the forecast for each configured future validation horizon."""
@@ -1532,6 +1650,7 @@ class DummyOSSolarCoordinator:
                 "temperature_candidate_snapshot": self._temperature_candidate_snapshot,
                 "horizon_candidate_snapshot": self._horizon_candidate_snapshot,
                 "partial_shading_candidate_snapshot": self._partial_shading_candidate_snapshot,
+                "residual_learning_candidate_snapshot": self._residual_learning_candidate_snapshot,
                 "energy_ws": dict(self._energy_ws),
                 "covered_seconds": dict(self._covered_seconds),
                 "sample_count": self._sample_count,
@@ -1542,6 +1661,11 @@ class DummyOSSolarCoordinator:
             "last_temperature_candidate_evaluation": self.last_temperature_candidate_evaluation,
             "last_horizon_candidate_evaluation": self.last_horizon_candidate_evaluation,
             "last_partial_shading_candidate_evaluation": self.last_partial_shading_candidate_evaluation,
+            "last_residual_learning_candidate_evaluation": self.last_residual_learning_candidate_evaluation,
+            "residual_learning_state": self.residual_learning_state,
+            "residual_learning_validation_history": self.residual_learning_validation_history,
+            "residual_learning_last_pair_status": self.residual_learning_last_pair_status,
+            "residual_learning_last_slot_id": self.residual_learning_last_slot_id,
             "temperature_ab_history": self.temperature_ab_history,
             "temperature_ab_last_pair_status": self.temperature_ab_last_pair_status,
             "temperature_ab_last_slot_id": self.temperature_ab_last_slot_id,
