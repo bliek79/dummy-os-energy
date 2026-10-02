@@ -13,7 +13,9 @@ on:
       - '.github/workflows/publish-alpha45.yml'
       - '.github/workflows/publish-alpha46.yml'
       - '.github/workflows/publish-alpha47.yml'
+      - '.github/workflows/publish-alpha51.yml'
       - 'RELEASE_NOTES_0.2.0-alpha.48.md'
+      - 'RELEASE_NOTES_0.2.0-alpha.51.md'
 
 permissions:
   contents: read
@@ -43,6 +45,7 @@ jobs:
             tests/test_solar_horizon_candidate.py \
             tests/test_solar_multimodel_validation.py \
             tests/test_solar_partial_shading_candidate.py \
+            tests/test_solar_residual_learning.py \
             tests/test_alpha30_startup_performance.py \
             tests/test_alpha29_price_buffer.py \
             tests/test_energy_profile_contract_step9.py \
@@ -66,7 +69,7 @@ jobs:
               and any(isinstance(t, ast.Name) and t.id == 'VERSION' for t in n.targets)
           )
           manifest = json.loads((root/'manifest.json').read_text())
-          assert version == manifest['version'] == '0.2.0-alpha.50'
+          assert version == manifest['version'] == '0.2.0-alpha.51'
           assert 'PLATFORMS = ["sensor", "select"]' in (root/'const.py').read_text()
           sensor = (root/'sensor.py').read_text()
           home = (root/'home_input_sensor.py').read_text()
