@@ -1099,7 +1099,6 @@ class DummyOSSolarCoordinator:
             "model": SOLAR_HORIZON_CANDIDATE_MODEL,
             "source_update": self.last_successful_update.isoformat() if self.last_successful_update else None,
             "captured_at": captured.isoformat(),
-            "physical_parent_signature": self.residual_parent_signature,
             "solar_azimuth_deg": point.solar_azimuth_deg,
             "solar_elevation_deg": point.solar_elevation_deg,
             "north_horizon_elevation_deg": point.north_horizon_elevation_deg,
@@ -1151,6 +1150,7 @@ class DummyOSSolarCoordinator:
                 else None
             ),
             "captured_at": captured.isoformat(),
+            "physical_parent_signature": self.residual_parent_signature,
             "solar_azimuth_deg": point.solar_azimuth_deg,
             "solar_elevation_deg": point.solar_elevation_deg,
             "north_horizon_elevation_deg": point.north_horizon_elevation_deg,
