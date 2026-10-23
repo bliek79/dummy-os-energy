@@ -53,7 +53,7 @@ def test_preserved_native_forecast_contract():
     assert "SOLAR_STORAGE_KEY" in const
 
 def test_version_consistency():
-    version = "0.2.0-alpha.52"
+    version = "0.2.0-alpha.53"
     assert f'VERSION = "{version}"' in source("const.py")
     manifest = json.loads(source("manifest.json"))
     assert manifest["version"] == version

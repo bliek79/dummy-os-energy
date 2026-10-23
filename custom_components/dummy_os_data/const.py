@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "dummy_os_data"
 NAME = "Dummy OS Energy"
-VERSION = "0.2.0-alpha.52"
+VERSION = "0.2.0-alpha.53"
 
 # Canonical Dummy OS Energy source-layer energy inputs.
 # Grid power is one bidirectional source: positive = import, negative = export.

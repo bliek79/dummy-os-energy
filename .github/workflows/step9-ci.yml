@@ -25,7 +25,7 @@ jobs:
           import json
           root = Path('custom_components/dummy_os_data')
           c = (root/'const.py').read_text()
-          assert json.loads((root/'manifest.json').read_text())['version'] == '0.2.0-alpha.52'
+          assert json.loads((root/'manifest.json').read_text())['version'] == '0.2.0-alpha.53'
           assert 'PLATFORMS = ["sensor"]' in c
           assert 'QUARTER_MINUTES = 15' in c
           assert 'FORECAST_HORIZON_HOURS = 72' in c

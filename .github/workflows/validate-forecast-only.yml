@@ -11,6 +11,7 @@ on:
       - 'RELEASE_NOTES*.md'
       - '.github/workflows/validate-forecast-only.yml'
       - '.github/workflows/publish-alpha52.yml'
+      - '.github/workflows/publish-alpha53.yml'
 
 permissions:
   contents: read
@@ -38,7 +39,7 @@ jobs:
           manifest = json.loads((root / 'manifest.json').read_text())
           version = next(ast.literal_eval(node.value) for node in ast.parse(const).body
                          if isinstance(node, ast.Assign) and any(isinstance(x, ast.Name) and x.id == 'VERSION' for x in node.targets))
-          assert version == manifest['version'] == '0.2.0-alpha.52'
+          assert version == manifest['version'] == '0.2.0-alpha.53'
           assert 'PLATFORMS = ["sensor"]' in const
           assert not (root / 'prices.py').exists()
           assert not (root / 'forecast.py').exists()

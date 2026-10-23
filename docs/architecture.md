@@ -1,4 +1,4 @@
-# Dummy OS Data architecture — alpha.52
+# Dummy OS Data architecture — alpha.53
 
 ## Contract
 
@@ -16,4 +16,4 @@ Preserve the technical domain dummy_os_data, existing source/solar/weather/degre
 ## Performance gate
 
 Earlier user isolation test strongly implicated the full Dummy OS Data integration in slow Home Assistant operations and failed backups, which immediately improved when disabled. The internal root cause remains unmeasured.
-Alpha.52 is a reduction of workload, not a claim of measured performance improvement. Re-enable only with a working backup; compare startup, UI, History/Statistics and backup against the disabled baseline. If it slows down again, disable the integration.
+Alpha.53 is a reduction of workload, not a claim of measured performance improvement. Re-enable only with a working backup; compare startup, UI, History/Statistics and backup against the disabled baseline. If it slows down again, disable the integration.

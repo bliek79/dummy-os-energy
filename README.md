@@ -22,6 +22,10 @@ From **0.2.0-alpha.52**, Home Forecast / Energy learning and Prices have been re
 - Electricity/gas price polling, tariff configuration and the published do_prices_* runtime states.
 - Historical Google Sheets rows and Home Assistant Recorder history are **not deleted**.
 
+## Startup fix in 0.2.0-alpha.53
+
+Fixes a missing Energy migration alias reference that blocked alpha.52 startup on installations with old entity registry entries. No Solar logic changed.
+
 ## Startup and rollback
 
 Sensor platforms register before Weather and Solar are initialized in the background. Degree Days initializes afterwards.

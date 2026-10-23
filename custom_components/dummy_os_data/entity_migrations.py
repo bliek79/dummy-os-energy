@@ -95,8 +95,6 @@ def is_known_generated_entity_id(platform: str, unique_id: str, entity_id: str) 
         return True
     if entity_id == DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES.get(unique_id):
         return True
-    if entity_id == ENERGY_GENERATED_ENTITY_ID_ALIASES.get(unique_id):
-        return True
     if entity_id in OBSOLETE_HOME_INPUT_ENTITY_ALIASES.get(unique_id, set()):
         return True
     return entity_id in DATA_GENERATED_ENTITY_ID_ALIASES.get(unique_id, set())
