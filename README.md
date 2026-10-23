@@ -1,67 +1,31 @@
-# Dummy OS Energy
+# Dummy OS Energy / Dummy OS Data
 
-Dummy OS Energy is the Home Assistant forecast/data integration for Dummy OS. Its technical domain remains `dummy_os_data` for installation and registry compatibility.
+Dummy OS Energy is a Home Assistant source/forecast observer integration with the technical domain **dummy_os_data**.
+From **0.2.0-alpha.52**, Home Forecast / Energy learning and Prices have been retired; DOEMS owns its own planning and prices.
 
-The integration is deliberately forecast-only. Planning, EMS, safety and shadow execution live in DOEMS; Dummy OS Energy does not keep a second EMS stack. Physical battery authority remains outside this integration.
+## Fixed forecast contract
 
-## Core architecture
+- Native 15-minute resolution, rolling 72 hours, exactly 288 slots.
+- Unknown / unavailable inputs must never be converted to zero.
+- Raw Solar remains the main forecast. F1, F3, F5 and F6 remain parallel observer candidates, without planner/physical authority.
 
-The native forecast contract is fixed:
+## Retained modules
 
-- 15-minute resolution;
-- rolling 72-hour horizon;
-- 288 forecast slots;
-- missing, unknown or unavailable values are never silently converted to zero;
-- Normal, Away and Unclassified are explicit forecast profile states;
-- Normal and Away learning are kept strictly separate.
+- **Source:** seven existing canonical source power sensors including derived Home Power.
+- **Weather:** Open-Meteo live state and forecast timeline.
+- **Solar:** north/south raw forecast, F1/F3/F5/F6 candidates, exact-lock validation and persisted learning data.
+- **Degree Days / Heat:** daily temperature/degree-day observations and reference validation.
 
-## Responsibilities
+## Retired in alpha.52
 
-Dummy OS Energy provides:
+- Historical Home Forecast, Energy profiles, evaluation, learning, model health and associated sensor/select entities.
+- Electricity/gas price polling, tariff configuration and the published do_prices_* runtime states.
+- Historical Google Sheets rows and Home Assistant Recorder history are **not deleted**.
 
-- canonical source normalization and Source Home Power;
-- Energy Forecast history and 72-hour forecast;
-- Energy forecast learning and validation;
-- accuracy, MAE, bias, coverage and confidence;
-- Peak Learning, Time Windows and Recency Weighting;
-- Fallback Hierarchy, Meaningful Confidence, Horizon Quality and Model Health;
-- Weather Forecast;
-- Solar Forecast;
-- electricity and gas price data;
-- Degree Days and weather-derived support data;
-- persistent forecast/learning stores required for restart continuity.
+## Startup and rollback
 
-## Explicit boundary
+Sensor platforms register before Weather and Solar are initialized in the background. Degree Days initializes afterwards.
+Only retired integration-owned Home/Energy entity IDs and known direct Prices runtime states are removed. Other integrations are untouched.
+Do not enable the new integration without a working Home Assistant backup. After installation, enable once, check retained entities, startup speed, History, Statistics and another backup. Disable the integration if system slowness returns.
 
-Dummy OS Energy does **not** provide an EMS/planner runtime.
-
-The internal `do_plan_*`, Plan Store, Scheduler, Safety, manual-plan controls, Presence/Away scheduling and Operating Mode stack that existed in the 0.2.0 alpha development line was removed in `0.2.0-alpha.43`.
-
-The simple Energy Forecast profile selector remains:
-
-- `normal`
-- `away`
-- `unclassified`
-
-This profile contract is part of forecasting and prevents away periods from polluting the normal learning profile. It is not an EMS Presence scheduler.
-
-## Startup model
-
-Local Energy history/state and Home Assistant platforms register first. Weather, Prices and Solar initialize as a background source wave; Degree Days initializes after Weather is available. Expensive forecast/quality calculations remain executor-backed and cached so they do not run on Home Assistant's main thread.
-
-## Public namespaces
-
-Forecast/data entities use:
-
-- `do_source_*`
-- `do_energy_*`
-- `do_weather_*`
-- `do_solar_*`
-- `do_prices_*`
-- `do_degree_days_*`
-
-No active `do_plan_*` namespace is part of Dummy OS Energy from alpha.43 onward; planner ownership is singular in DOEMS.
-
-## Project status
-
-Active alpha development. The leading architecture and progress record is maintained in the project routebaseline before code changes are made.
+Home Assistant version before installation and release version in manifest.json must be checked. Current live installation/version is not proven by code inspection alone.

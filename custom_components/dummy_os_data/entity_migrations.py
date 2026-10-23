@@ -56,20 +56,6 @@ DEGREE_DAYS_GENERATED_ENTITY_ID_ALIASES: dict[str, str] = {
 }
 
 
-ENERGY_GENERATED_ENTITY_ID_ALIASES: dict[str, str] = {
-    "do_energy_forecast_quality_by_daypart": "sensor.dummy_os_forecast_do_energy_forecast_quality_by_daypart",
-    "do_energy_forecast_quality_by_day_type": "sensor.dummy_os_forecast_do_energy_forecast_quality_by_day_type",
-    "do_energy_forecast_quality_by_day_type_and_daypart": "sensor.dummy_os_forecast_do_energy_forecast_quality_by_day_type_and_daypart",
-    "do_energy_forecast_quality_by_hour": "sensor.dummy_os_forecast_do_energy_forecast_quality_by_hour",
-    "do_energy_time_windows": "sensor.dummy_os_forecast_do_energy_time_windows",
-    "do_energy_recency_weighting": "sensor.dummy_os_forecast_do_energy_recency_weighting",
-    "do_energy_fallback_hierarchy": "sensor.dummy_os_forecast_do_energy_fallback_hierarchy",
-    "do_energy_meaningful_confidence": "sensor.dummy_os_forecast_do_energy_meaningful_confidence",
-    "do_energy_forecast_quality_by_horizon": "sensor.dummy_os_forecast_do_energy_forecast_quality_by_horizon",
-    "do_energy_forecast_planner_hours": "sensor.dummy_os_forecast_do_energy_forecast_planner_hours",
-    "do_energy_forecast_planner_contract": "sensor.dummy_os_forecast_do_energy_forecast_planner_contract",
-}
-
 OBSOLETE_HOME_INPUT_ENTITY_ALIASES: dict[str, set[str]] = {
     "do_input_home_power_raw": {
         "sensor.dummy_os_input_home_power_raw",

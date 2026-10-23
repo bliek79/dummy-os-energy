@@ -1,67 +1,12 @@
-# Entity specification - 0.1.0-alpha.11.3
+# Public entities — alpha.52
 
-| Entity | Meaning | Unit | Device class | State class | Update |
-|---|---|---|---|---|---|
-| `sensor.do_home_actual_quarter` | Last completed valid 15-minute home energy | kWh | energy | none | quarter boundary |
-| `sensor.do_home_history_status` | Historical collection health | text | none | none | source/profile/quarter event |
-| `sensor.do_home_history_days` | Local days containing valid quarter history | d | none | none | quarter boundary |
-| `sensor.do_home_forecast_model` | Active stage/model identifier | text | none | none | model/profile event |
-| `select.do_home_profile` | Historical/forecast regime | normal/away | n/a | n/a | user choice |
+| Prefix | Description |
+|---|---|
+| do_source_* | Normalized grid, solar, battery and derived home power |
+| do_weather_* | Open-Meteo weather and 288-slot timeline |
+| do_solar_* | Raw/F1/F3/F5/F6 north/south 288-slot forecasts and evaluations |
+| do_degree_days_* | Weather/heat degree-days and daily reference observations |
 
-## Reserved future evaluation entities
-
-These are intentionally **not created yet** until their formulas are implemented and validated:
-
-- `sensor.do_home_forecast_error`
-- `sensor.do_home_forecast_mae`
-- `sensor.do_home_forecast_bias`
-- `sensor.do_home_forecast_accuracy_24h`
-- `sensor.do_home_forecast_accuracy_7d`
-- `sensor.do_home_forecast_confidence`
-- `sensor.do_home_forecast_coverage`
-- `sensor.do_home_forecast_health`
-
-The percentage accuracy formula will be defined before these entities are activated, with explicit handling for quarters where actual consumption is zero or near zero.
-
-## Solar shadow entities
-
-| Entity | Meaning | Unit/state | Recorder |
-|---|---|---|---|
-| `sensor.do_solar_status` | Open-Meteo Solar source quality and freshness | text | normal |
-| `sensor.do_solar_forecast_timeline` | Rolling north/south/total 72h forecast | 288 slots | `points` excluded |
-| `sensor.do_solar_forecast_today_north` | Remaining forecast for local today, north | kWh | normal |
-| `sensor.do_solar_forecast_today_south` | Remaining forecast for local today, south | kWh | normal |
-| `sensor.do_solar_forecast_today_total` | Remaining forecast for local today, total | kWh | normal |
-| `sensor.do_solar_forecast_tomorrow_north` | Forecast for local tomorrow, north | kWh | normal |
-| `sensor.do_solar_forecast_tomorrow_south` | Forecast for local tomorrow, south | kWh | normal |
-| `sensor.do_solar_forecast_tomorrow_total` | Forecast for local tomorrow, total | kWh | normal |
-| `sensor.do_solar_forecast_next_quarter` | Total forecast for next complete quarter | kWh | normal |
-| `sensor.do_solar_actual_power_north` | North AC-equivalent actual power | W | normal |
-| `sensor.do_solar_actual_power_south` | South AC-equivalent actual power | W | normal |
-| `sensor.do_solar_actual_power_total` | Inverter total actual AC power | W | normal |
-| `sensor.do_solar_evaluation_last_completed_quarter` | Immutable forecast-versus-actual record for the last completed quarter | slot start | normal |
-| `sensor.do_solar_model` | Model, roof configuration and calculation metadata | text | normal |
-
-The evaluation sensor uses its UTC slot start as state so every completed
-quarter produces one deterministic state change for automations. Its attributes
-are flat and Sheets-ready: forecast, actual, signed/absolute error, bias,
-accuracy and coverage for north, south and total. Invalid or partial quarters
-are still published with an explicit status; missing measurements are never
-silently converted to zero.
-
-Solar remains observation/shadow. Package 86 and Solcast remain the independent
-reference while native quarter history is collected; no calibration or planner
-control is performed.
-
-### Solar entity-ID migration
-
-Alpha.11.1 migrated the 13 entity IDs observed on a clean alpha.11.0 install
-from `sensor.dummy_os_solar_*` to the fixed `sensor.do_solar_*` contract. The
-migration uses each exact observed source ID and the existing integration
-`unique_id`; it does not infer or guess a generated prefix. Home Assistant
-history and entity-registry settings therefore remain attached to the same
-entities.
-
-The new evaluation entity follows the same fixed-ID contract and has its own
-explicit generated-ID alias. A real Home Assistant registration check remains
-required before publishing the audited changes.
+Retired: do_energy_*, do_home_* and do_prices_* runtime entities and select.do_energy_profile. Existing Solar states and History/Recorder are not cleared.
+F6's persistent learner state and exact-lock history are preserved; old F6 validation may be rechecked when re-enabled.
+DOEMS is not modified and no price/planner authority lives here.

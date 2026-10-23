@@ -1,44 +1,25 @@
-"""Regression gate for the Dummy OS Forecast Minimal Core runtime."""
-
-from __future__ import annotations
-
-import ast
+"""Reject accidental recreation of Home Forecast and Prices processing."""
 from pathlib import Path
 
+ROOT = Path(__file__).parents[1]
+MOD = ROOT / "custom_components/dummy_os_data"
 
-COORDINATOR = Path("custom_components/dummy_os_data/coordinator.py")
+def test_no_home_coordinator_event_loop():
+    coordinator = (MOD / "coordinator.py").read_text()
+    assert "_async_quarter_boundary" not in coordinator
+    assert "forecast_snapshots" not in coordinator
+    assert "history" not in coordinator
+    assert "DummyOSWeatherCoordinator(hass)" in coordinator
 
+def test_source_states_do_not_trigger_legacy_forecast():
+    source = (MOD / "home_input_sensor.py").read_text()
+    assert "async_track_state_change_event" in source
+    assert "async_write_ha_state" in source
+    assert "DummyOSEnergyFallbackHierarchySensor" not in source
+    assert "calculate_meaningful_confidence" not in source
 
-def _method_source(method_name: str) -> str:
-    source = COORDINATOR.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == method_name:
-            return ast.get_source_segment(source, node) or ""
-    raise AssertionError(f"method {method_name!r} not found")
-
-
-def test_fast_home_power_updates_do_not_notify_forecast_entities() -> None:
-    """A live power sample may integrate energy, but must not fan out into forecast analysis."""
-    method = _method_source("_async_source_changed")
-    assert "_integrate_until" in method
-    assert "_last_power_w" in method
-    assert "_notify" not in method
-
-
-def test_quarter_boundary_remains_the_energy_forecast_refresh_point() -> None:
-    """Completed quarters still publish refreshed Energy Forecast state through the shared boundary helper."""
-    boundary = _method_source("_async_quarter_boundary")
-    helper = _method_source("_advance_through_elapsed_boundaries")
-    assert "_advance_through_elapsed_boundaries" in boundary
-    assert "_notify" in boundary
-    assert "_finalize_quarter" in helper
-    assert "_start_new_quarter" in helper
-    assert "_capture_forecast_for_slot_start" in helper
-
-
-def test_profile_change_still_refreshes_energy_forecast_state() -> None:
-    """A deliberate profile change remains a relevant forecast refresh trigger."""
-    method = _method_source("async_set_profile")
-    assert "_notify" in method
-    assert "_advance_through_elapsed_boundaries" in method
+def test_price_polling_removed():
+    init = (MOD / "__init__.py").read_text()
+    assert "DummyOSPricesCoordinator" not in init
+    assert "prices.async_setup" not in init
+    assert not (MOD / "prices.py").exists()
