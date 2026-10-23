@@ -1,12 +1,28 @@
-"""Release consistency suite with release-local version selection."""
-from __future__ import annotations
-import importlib.util
+"""Check release version metadata, kept platform and no retired integrations."""
 from pathlib import Path
+import json
+import re
 
-_PATH = Path(__file__).with_name("release_consistency_core.py")
-_SPEC = importlib.util.spec_from_file_location("release_consistency_core", _PATH)
-assert _SPEC is not None and _SPEC.loader is not None
-_CORE = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_CORE)
-_CORE.VERSION = "0.2.0-alpha.51"
-ReleaseConsistencyTests = _CORE.ReleaseConsistencyTests
+ROOT = Path(__file__).parents[1]
+MOD = ROOT / "custom_components/dummy_os_data"
+VERSION = "0.2.0-alpha.52"
+
+def source(name):
+    return (MOD / name).read_text(encoding="utf-8")
+
+def test_release_metadata():
+    assert json.loads(source("manifest.json"))["version"] == VERSION
+    assert re.search(r'^VERSION = "0\.2\.0-alpha\.52"$', source("const.py"), re.M)
+    assert f"**Tag:** `0.2.0-alpha.52`" in (ROOT / f"RELEASE_NOTES_{VERSION}.md").read_text()
+
+def test_translation_keys_match():
+    strings = json.loads(source("strings.json"))
+    en = json.loads(source("translations/en.json"))
+    nl = json.loads(source("translations/nl.json"))
+    assert set(strings["options"]["step"]["init"]["data"]) == set(en["options"]["step"]["init"]["data"]) == set(nl["options"]["step"]["init"]["data"])
+
+def test_nonsolar_retirement_complete():
+    assert 'PLATFORMS = ["sensor"]' in source("const.py")
+    assert "do_prices_status" not in source("sensor.py")
+    assert "DummyOSHomeForecast" not in source("sensor.py")
+    assert not (MOD / "prices.py").exists()

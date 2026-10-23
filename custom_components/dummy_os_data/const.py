@@ -4,20 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "dummy_os_data"
 NAME = "Dummy OS Energy"
-VERSION = "0.2.0-alpha.51"
-
-# Legacy Energy Forecast source key retained for config-entry compatibility only.
-# Energy Forecast production always consumes the canonical Source Home Power entity.
-CONF_HOME_POWER_ENTITY = "home_power_entity"
-DEFAULT_HOME_POWER_ENTITY = "sensor.home_power"
-CANONICAL_HOME_POWER_ENTITY = "sensor.do_source_home_power"
-CONF_HOME_POWER_POSITIVE_DIRECTION = "home_power_positive_direction"
-HOME_POWER_POSITIVE_CONSUMPTION = "consumption"
-HOME_POWER_POSITIVE_EXPORT = "export"
-HOME_POWER_POSITIVE_DIRECTION_OPTIONS = [
-    HOME_POWER_POSITIVE_CONSUMPTION,
-    HOME_POWER_POSITIVE_EXPORT,
-]
+VERSION = "0.2.0-alpha.52"
 
 # Canonical Dummy OS Energy source-layer energy inputs.
 # Grid power is one bidirectional source: positive = import, negative = export.
@@ -35,26 +22,6 @@ DATA_POWER_SOURCE_KEYS = [
 # Temporary alpha.11.5 option keys retained only to prefill migration safely.
 LEGACY_CONF_GRID_IMPORT_POWER_ENTITY = "grid_import_power_entity"
 LEGACY_CONF_GRID_EXPORT_POWER_ENTITY = "grid_export_power_entity"
-
-CONF_TARIFF_PROFILE_ID = "tariff_profile_id"
-CONF_TARIFF_SUPPLIER = "tariff_supplier"
-CONF_TARIFF_VALID_FROM = "tariff_valid_from"
-CONF_VAT_PERCENT = "vat_percent"
-CONF_ELECTRICITY_IMPORT_SUPPLIER = "electricity_import_supplier_incl_vat"
-CONF_ELECTRICITY_IMPORT_TAX = "electricity_import_tax_incl_vat"
-CONF_ELECTRICITY_EXPORT_SUPPLIER = "electricity_export_supplier_incl_vat"
-CONF_ELECTRICITY_EXPORT_TAX = "electricity_export_tax_incl_vat"
-CONF_ELECTRICITY_FIXED_SUPPLY_PER_DAY = "electricity_fixed_supply_per_day"
-CONF_ELECTRICITY_GRID_PER_DAY = "electricity_grid_per_day"
-CONF_ELECTRICITY_TAX_CREDIT_PER_DAY = "electricity_tax_credit_per_day"
-CONF_GAS_MARKET_ENTITY = "gas_market_entity"
-CONF_GAS_SUPPLIER = "gas_supplier_incl_vat"
-CONF_GAS_TAX = "gas_tax_incl_vat"
-CONF_GAS_FIXED_SUPPLY_PER_DAY = "gas_fixed_supply_per_day"
-CONF_GAS_GRID_PER_DAY = "gas_grid_per_day"
-
-DEFAULT_GAS_MARKET_ENTITY = "sensor.energyzero_today_gas_current_hour_price"
-GAS_VARIABLE_ADDON_ENTITY = "input_number.gas_markup_per_m3"
 
 CONF_SOLAR_ACTUAL_TOTAL_ENTITY = "solar_actual_total_entity"
 CONF_SOLAR_ACTUAL_NORTH_DC_ENTITY = "solar_actual_north_dc_entity"
@@ -78,22 +45,10 @@ DEFAULT_SOLAR_ACTUAL_TOTAL_ENTITY = "sensor.sb3_6_1av_41_857_pv_power"
 DEFAULT_SOLAR_ACTUAL_NORTH_DC_ENTITY = "sensor.sb3_6_1av_41_857_pv_power_a"
 DEFAULT_SOLAR_ACTUAL_SOUTH_DC_ENTITY = "sensor.sb3_6_1av_41_857_pv_power_b"
 
-PLATFORMS = ["sensor", "select"]
+PLATFORMS = ["sensor"]
 
-STORAGE_VERSION = 1
-STORAGE_KEY = f"{DOMAIN}.home_forecast"
-ENERGY_STORE_SCHEMA_VERSION = 2
-ENERGY_EVALUATION_SCHEMA_VERSION = 1
 SOLAR_STORAGE_VERSION = 1
 SOLAR_STORAGE_KEY = f"{DOMAIN}.solar_evaluation"
-
-PROFILE_CONTRACT_VERSION = 1
-PROFILE_NORMAL = "normal"
-PROFILE_AWAY = "away"
-PROFILE_UNCLASSIFIED = "unclassified"
-PROFILE_MIXED = "mixed"
-PROFILE_LEARNING_OPTIONS = [PROFILE_NORMAL, PROFILE_AWAY]
-PROFILE_OPTIONS = [PROFILE_NORMAL, PROFILE_AWAY, PROFILE_UNCLASSIFIED]
 
 QUARTER_MINUTES = 15
 QUARTER_SECONDS = QUARTER_MINUTES * 60
@@ -101,5 +56,4 @@ QUARTERS_PER_DAY = 96
 FORECAST_HORIZON_HOURS = 72
 FORECAST_SLOTS = FORECAST_HORIZON_HOURS * 60 // QUARTER_MINUTES
 MAX_HISTORY_DAYS = 400
-MIN_VALID_COVERAGE = 0.90
 SOLAR_MIN_VALID_COVERAGE = 0.90

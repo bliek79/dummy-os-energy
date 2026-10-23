@@ -1,3 +1,3 @@
 # Dummy OS Energy
 
-Centrale energie-integratie voor Dummy OS. De integratie werkt native op 15 minuten met een rollende horizon van 72 uur / 288 slots en bevat Source, Energy Forecast, Weather, Solar, Prices en Degree Days. De nieuwe planner wordt stapsgewijs binnen deze integratie opgebouwd onder de `do_plan_*`-namespace, terwijl de bestaande Dummy OS EMS voorlopig als referentie en rollback naast de nieuwe keten blijft bestaan.
+Home Assistant data/forecast observer (technical domain dummy_os_data): Source, Weather, Solar including F1/F3/F5/F6 candidates, and Degree Days / Heat. Native 15 min / 72 h / 288 slots. Home Forecast and Prices were removed in alpha.52; DOEMS is a separate planner.

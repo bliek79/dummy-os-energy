@@ -1,63 +1,24 @@
+"""Prevent former Home Forecast startup workload from returning."""
 from pathlib import Path
-import json
-import re
 
-ROOT = Path(__file__).parents[1]
+MODULE = Path(__file__).parents[1] / "custom_components/dummy_os_data"
 
+def test_no_home_forecast_exec_jobs():
+    for name in ("sensor.py", "home_input_sensor.py", "coordinator.py"):
+        text = (MODULE / name).read_text()
+        assert "calculate_recency_weighting" not in text
+        assert "calculate_fallback_hierarchy" not in text
+        assert "HomeBaselineForecast" not in text
+        assert "DummyOSAsyncForecastResultSensor" not in text
 
-def _read(path: str) -> str:
-    return (ROOT / path).read_text()
+def test_solar_still_uses_unchanged_72_hour_timeline():
+    solar = (MODULE / "solar.py").read_text()
+    assert "FORECAST_SLOTS" in solar
+    assert "_rebuild_residual_learning_candidate" in solar
+    assert "_record_residual_learning_validation" in solar
 
-
-def test_live_forecast_cache_no_longer_calls_removed_planner_helpers():
-    sensor = _read("custom_components/dummy_os_data/sensor.py")
-    block = sensor.split("    def _forecast(self):", 1)[1].split("\n\nclass DummyOSActualQuarterSensor", 1)[0]
-    assert "window_start = ceil_quarter(reference)" in block
-    assert "window_start=window_start" in block
-    assert "build_time_contract(" not in block
-    assert 'utc(contract["window_start"])' not in block
-
-
-def test_heavy_forecast_refreshes_wait_until_home_assistant_started():
-    sensor = _read("custom_components/dummy_os_data/sensor.py")
-    home = _read("custom_components/dummy_os_data/home_input_sensor.py")
-    for source in (sensor, home):
-        assert "CoreState.running" in source
-        assert "async_at_started" in source
-        assert ".entry.async_create_background_task(" in source
-        assert "self.hass.async_create_task(" not in source
-        assert "eager_start=False" in source
-
-
-def test_cloud_source_wave_is_a_true_background_config_entry_task():
-    init = _read("custom_components/dummy_os_data/__init__.py")
-    setup = init.split("async def async_setup_entry", 1)[1]
-    assert "entry.async_create_background_task(" in setup
-    assert '"Dummy OS Data cloud sources"' in setup
-    assert "eager_start=False" in setup
-    assert "hass.async_create_task(" not in setup
-
-
-def test_forecast_only_boundary_stays_closed():
-    sensor = _read("custom_components/dummy_os_data/sensor.py")
-    home = _read("custom_components/dummy_os_data/home_input_sensor.py")
-    init = _read("custom_components/dummy_os_data/__init__.py")
-    combined = "\n".join((sensor, home, init))
-    for marker in (
-        "do_plan_",
-        "presence_runtime",
-        "DummyOSPlanOperatingMode",
-        "manual_plan_",
-    ):
-        assert marker not in combined
-
-
-def test_alpha44_or_later_version_is_consistent():
-    const = _read("custom_components/dummy_os_data/const.py")
-    manifest = json.loads(_read("custom_components/dummy_os_data/manifest.json"))
-    match = re.search(r'^VERSION = "([^"]+)"$', const, re.MULTILINE)
-    assert match is not None
-    assert match.group(1) == manifest["version"]
-    prefix = "0.2.0-alpha."
-    assert manifest["version"].startswith(prefix)
-    assert int(manifest["version"].removeprefix(prefix)) >= 44
+def test_solar_and_weather_remain_background_sources():
+    init = (MODULE / "__init__.py").read_text()
+    assert '"Dummy OS Data retained cloud sources"' in init
+    assert "eager_start=False" in init
+    assert "entry.async_create_background_task(" in init

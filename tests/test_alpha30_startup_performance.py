@@ -1,51 +1,25 @@
+"""Startup contract for reduced integration, retaining cloud-background startup."""
 from pathlib import Path
-import json
-import re
 
+ROOT = Path(__file__).parents[1] / "custom_components/dummy_os_data"
 
-ROOT = Path(__file__).parents[1]
+def test_platform_first_then_background_cloud():
+    init = (ROOT / "__init__.py").read_text()
+    setup = init.split("async def async_setup_entry", 1)[1]
+    assert setup.index("async_forward_entry_setups") < setup.index("async_create_background_task")
+    assert "eager_start=False" in setup
 
-
-def _read(path: str) -> str:
-    return (ROOT / path).read_text()
-
-
-def test_cloud_sources_start_after_platform_registration() -> None:
-    source = _read("custom_components/dummy_os_data/__init__.py")
-    setup = source.split("async def async_setup_entry", 1)[1]
-    assert setup.index("async_forward_entry_setups") < setup.index("_async_setup_cloud_sources")
-    assert "coordinator.weather.async_setup = _async_noop" in setup
-    assert "coordinator.weather.async_setup = weather_setup" in setup
-
-
-def test_weather_prices_and_solar_initialize_concurrently() -> None:
-    source = _read("custom_components/dummy_os_data/__init__.py")
-    helper = source.split("async def _async_setup_cloud_sources", 1)[1].split("def _is_obsolete_home_input_state", 1)[0]
-    assert "await asyncio.gather(" in helper
-    assert "weather_setup()" in helper
-    assert "coordinator.prices.async_setup()" in helper
+def test_cloud_sources_are_weather_solar_only():
+    init = (ROOT / "__init__.py").read_text()
+    helper = init.split("async def _async_setup_cloud_sources", 1)[1].split("def _is_obsolete_home_input_state", 1)[0]
+    assert "asyncio.gather" in helper
+    assert "coordinator.weather.async_setup()" in helper
     assert "coordinator.solar.async_setup()" in helper
-    assert "return_exceptions=True" in helper
+    assert "coordinator.degree_days.async_setup()" in helper
+    assert "coordinator.prices" not in helper
 
-
-def test_degree_days_starts_after_cloud_source_wave() -> None:
-    source = _read("custom_components/dummy_os_data/__init__.py")
-    helper = source.split("async def _async_setup_cloud_sources", 1)[1].split("def _is_obsolete_home_input_state", 1)[0]
-    assert helper.index("await asyncio.gather(") < helper.index("await coordinator.degree_days.async_setup()")
-
-
-def test_background_startup_task_is_cancelled_on_unload() -> None:
-    source = _read("custom_components/dummy_os_data/__init__.py")
-    assert "coordinator._source_setup_task = source_setup_task" in source
-    assert "source_setup_task.cancel()" in source
-    assert "except asyncio.CancelledError" in source
-
-
-def test_current_version_is_consistent_after_alpha30() -> None:
-    const = _read("custom_components/dummy_os_data/const.py")
-    manifest = json.loads(_read("custom_components/dummy_os_data/manifest.json"))
-    match = re.search(r'^VERSION = "([^"]+)"$', const, re.MULTILINE)
-    assert match is not None
-    assert match.group(1) == manifest["version"]
-    assert manifest["version"].startswith("0.2.0-alpha.")
-    assert int(manifest["version"].rsplit(".", 1)[1]) >= 30
+def test_cancel_background_wave_before_unload():
+    init = (ROOT / "__init__.py").read_text()
+    unload = init.split("async def async_unload_entry", 1)[1]
+    assert "source_task.cancel()" in unload
+    assert "await source_task" in unload

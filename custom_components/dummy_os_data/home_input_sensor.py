@@ -1,35 +1,17 @@
-"""Canonical energy-flow source sensors for Dummy OS Forecast."""
-
+"""Canonical Source power sensors, independent of Home Forecast."""
 from __future__ import annotations
-
 from typing import Any
-
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import UnitOfPower
-from homeassistant.core import CoreState, Event, EventStateChangedData, HomeAssistant, State, callback
+from homeassistant.core import Event, EventStateChangedData, State, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers.start import async_at_started
-from homeassistant.util import dt as dt_util
-
 from .const import (
-    CONF_BATTERY_CHARGE_POWER_ENTITY,
-    CONF_BATTERY_DISCHARGE_POWER_ENTITY,
-    CONF_DATA_SOLAR_POWER_ENTITY,
-    CONF_GRID_NET_POWER_ENTITY,
-    DOMAIN,
-    NAME,
-    PROFILE_LEARNING_OPTIONS,
-    VERSION,
+    CONF_BATTERY_CHARGE_POWER_ENTITY, CONF_BATTERY_DISCHARGE_POWER_ENTITY,
+    CONF_DATA_SOLAR_POWER_ENTITY, CONF_GRID_NET_POWER_ENTITY,
+    DOMAIN, NAME, VERSION,
 )
-from .coordinator import DummyOSHomeDataCoordinator
-from .fallback_hierarchy import calculate_fallback_hierarchy
-from .meaningful_confidence import calculate_meaningful_confidence
-from .horizon_quality import calculate_horizon_quality
+from .coordinator import DummyOSDataCoordinator
 
 POSITIVE_SOURCE_DEFINITIONS: tuple[tuple[str, str, str, str], ...] = (
     (
@@ -82,7 +64,7 @@ class DummyOSSourcePowerBaseSensor(SensorEntity):
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
+    def __init__(self, coordinator: DummyOSDataCoordinator) -> None:
         self.coordinator = coordinator
         self._remove_listener = None
 
@@ -169,7 +151,7 @@ class DummyOSSourceGridNetPowerSensor(DummyOSSourcePowerBaseSensor):
 class DummyOSSourceGridSplitPowerSensor(DummyOSSourcePowerBaseSensor):
     """Positive import or export magnitude derived from the signed grid source."""
 
-    def __init__(self, coordinator: DummyOSHomeDataCoordinator, *, export: bool) -> None:
+    def __init__(self, coordinator: DummyOSDataCoordinator, *, export: bool) -> None:
         super().__init__(coordinator)
         self.export = export
         if export:
@@ -216,7 +198,7 @@ class DummyOSSourcePowerSensor(DummyOSSourcePowerBaseSensor):
 
     def __init__(
         self,
-        coordinator: DummyOSHomeDataCoordinator,
+        coordinator: DummyOSDataCoordinator,
         config_key: str,
         object_id: str,
         name: str,
@@ -319,269 +301,17 @@ class DummyOSSourceHomePowerSensor(DummyOSSourcePowerBaseSensor):
         }
 
 
-class DummyOSEnergyFallbackHierarchySensor(SensorEntity):
-    """Observer-only Step 10 Energy fallback-hierarchy diagnostics."""
 
-    _attr_should_poll = False
-    _attr_has_entity_name = False
-    _attr_name = "DO Energy Fallback Hierarchy"
-    _attr_unique_id = "do_energy_fallback_hierarchy"
-    _attr_suggested_object_id = "do_energy_fallback_hierarchy"
-    _attr_icon = "mdi:call-split"
-    _unrecorded_attributes = frozenset(
-        {"per_level_metrics", "day_type_daypart_metrics", "early_late_metrics"}
-    )
-
-    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
-        self.coordinator = coordinator
-        self._remove_listener = None
-        self._cached_result: dict[str, Any] | None = None
-        self._refresh_task = None
-        self._refresh_pending = False
-        self._startup_unsub = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, "main")}, name=NAME, manufacturer="Dummy OS", model="Forecast Platform", sw_version=VERSION)
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self._remove_listener = self.coordinator.async_add_listener(self._handle_update)
-        self._schedule_refresh()
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._remove_listener is not None:
-            self._remove_listener()
-        if self._startup_unsub is not None:
-            self._startup_unsub()
-            self._startup_unsub = None
-        if self._refresh_task is not None and not self._refresh_task.done():
-            self._refresh_task.cancel()
-        await super().async_will_remove_from_hass()
-
-    @callback
-    def _handle_update(self) -> None:
-        self._schedule_refresh()
-
-    @callback
-    def _schedule_refresh(self) -> None:
-        if self.hass.state is not CoreState.running:
-            self._refresh_pending = True
-            if self._startup_unsub is None:
-                self._startup_unsub = async_at_started(
-                    self.hass, self._async_startup_refresh
-                )
-            return
-        if self._refresh_task is not None and not self._refresh_task.done():
-            self._refresh_pending = True
-            return
-        self._refresh_pending = False
-        self._refresh_task = self.coordinator.entry.async_create_background_task(
-            self.hass,
-            self._async_refresh_result(),
-            f"Dummy OS Data {type(self).__name__} refresh",
-            eager_start=False,
-        )
-
-    @callback
-    def _async_startup_refresh(self, hass: HomeAssistant) -> None:
-        self._startup_unsub = None
-        self._schedule_refresh()
-
-    async def _async_refresh_result(self) -> None:
-        while True:
-            self._refresh_pending = False
-            records = list(self.coordinator.records)
-            evaluations = list(self.coordinator.evaluations)
-            profile = self.coordinator.profile
-            result = await self.hass.async_add_executor_job(
-                self._calculate_result, records, evaluations, profile
-            )
-            self._cached_result = result
-            self.async_write_ha_state()
-            if not self._refresh_pending:
-                return
-
-    def _calculate_result(
-        self, records: list[dict[str, Any]], evaluations: list[dict[str, Any]], profile: str
-    ) -> dict[str, Any]:
-        if profile not in PROFILE_LEARNING_OPTIONS:
-            return {"schema_version": 1, "algorithm_version": "fallback_hierarchy_observer_v1", "status": "inactive_profile", "profile": profile, "observer_only": True, "forecast_influence_enabled": False, "native_resolution_minutes": 15, "production_model": "historical_baseline", "production_model_version": "0.4", "control_recency_half_life_days": 28.0, "control_hierarchy": ["weekday_quarter", "day_type_quarter", "quarter_of_day", "profile_mean"], "candidate_hierarchy": ["weekday_quarter", "day_type_quarter", "nearby_quarter_day_type", "same_hour_profile", "daypart_profile", "profile_global_median"], "evaluation_count": 0, "distinct_local_days": 0, "eligible_level_shadow_count": 0, "hierarchy_changed_selection_count": 0, "fallback_activation_counts": {}, "excluded_record_counts": {}, "control_metrics": {}, "candidate_metrics": {}, "per_level_metrics": {}, "day_type_daypart_metrics": {}, "early_late_metrics": {}, "preferred_candidate_hierarchy": ["weekday_quarter", "day_type_quarter", "nearby_quarter_day_type", "same_hour_profile", "daypart_profile", "profile_global_median"], "replay_candidate_supported": False, "promotion_ready": False, "live_shadow_required": True, "blockers": ["profile_unclassified"], "promotion_blockers": ["profile_unclassified", "live_shadow_required"], "calibration_fingerprint": None}
-        return calculate_fallback_hierarchy(records, evaluations, profile, dt_util.as_local)
-
-    def _result(self) -> dict[str, Any]:
-        return self._cached_result or {"status": "initializing", "profile": self.coordinator.profile, "observer_only": True, "forecast_influence_enabled": False, "blockers": ["observer_calculation_pending"]}
-
-    @property
-    def native_value(self) -> str:
-        return str(self._result()["status"])
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return dict(self._result())
-
-class DummyOSEnergyMeaningfulConfidenceSensor(SensorEntity):
-    """Observer-only Step 11 meaningful-confidence diagnostics."""
-
-    _attr_should_poll = False
-    _attr_has_entity_name = False
-    _attr_name = "DO Energy Meaningful Confidence"
-    _attr_unique_id = "do_energy_meaningful_confidence"
-    _attr_suggested_object_id = "do_energy_meaningful_confidence"
-    _attr_icon = "mdi:gauge"
-    _unrecorded_attributes = frozenset({"production_buckets", "candidate_buckets"})
-
-    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
-        self.coordinator = coordinator
-        self._remove_listener = None
-        self._cached_result: dict[str, Any] | None = None
-        self._refresh_task = None
-        self._refresh_pending = False
-        self._startup_unsub = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, "main")}, name=NAME, manufacturer="Dummy OS", model="Forecast Platform", sw_version=VERSION)
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self._remove_listener = self.coordinator.async_add_listener(self._handle_update)
-        self._schedule_refresh()
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._remove_listener is not None:
-            self._remove_listener()
-        if self._startup_unsub is not None:
-            self._startup_unsub()
-            self._startup_unsub = None
-        if self._refresh_task is not None and not self._refresh_task.done():
-            self._refresh_task.cancel()
-        await super().async_will_remove_from_hass()
-
-    @callback
-    def _handle_update(self) -> None:
-        self._schedule_refresh()
-
-    @callback
-    def _schedule_refresh(self) -> None:
-        if self.hass.state is not CoreState.running:
-            self._refresh_pending = True
-            if self._startup_unsub is None:
-                self._startup_unsub = async_at_started(
-                    self.hass, self._async_startup_refresh
-                )
-            return
-        if self._refresh_task is not None and not self._refresh_task.done():
-            self._refresh_pending = True
-            return
-        self._refresh_pending = False
-        self._refresh_task = self.coordinator.entry.async_create_background_task(
-            self.hass,
-            self._async_refresh_result(),
-            f"Dummy OS Data {type(self).__name__} refresh",
-            eager_start=False,
-        )
-
-    @callback
-    def _async_startup_refresh(self, hass: HomeAssistant) -> None:
-        self._startup_unsub = None
-        self._schedule_refresh()
-
-    async def _async_refresh_result(self) -> None:
-        while True:
-            self._refresh_pending = False
-            records = list(self.coordinator.records)
-            evaluations = list(self.coordinator.evaluations)
-            profile = self.coordinator.profile
-            result = await self.hass.async_add_executor_job(
-                self._calculate_result, records, evaluations, profile
-            )
-            self._cached_result = result
-            self.async_write_ha_state()
-            if not self._refresh_pending:
-                return
-
-    def _calculate_result(
-        self, records: list[dict[str, Any]], evaluations: list[dict[str, Any]], profile: str
-    ) -> dict[str, Any]:
-        return calculate_meaningful_confidence(records, evaluations, profile, dt_util.as_local)
-
-    def _result(self) -> dict[str, Any]:
-        return self._cached_result or {"status": "initializing", "profile": self.coordinator.profile, "observer_only": True, "forecast_influence_enabled": False, "blockers": ["observer_calculation_pending"]}
-
-    @property
-    def native_value(self) -> str:
-        return str(self._result()["status"])
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return dict(self._result())
-
-class DummyOSEnergyForecastQualityByHorizonSensor(SensorEntity):
-    """Observer-only Step 12 quality by forecast horizon."""
-
-    _attr_should_poll = False
-    _attr_has_entity_name = False
-    _attr_name = "DO Energy Forecast Quality by Horizon"
-    _attr_unique_id = "do_energy_forecast_quality_by_horizon"
-    _attr_suggested_object_id = "do_energy_forecast_quality_by_horizon"
-    _attr_icon = "mdi:timeline-clock-outline"
-    _unrecorded_attributes = frozenset({"horizons"})
-
-    def __init__(self, coordinator: DummyOSHomeDataCoordinator) -> None:
-        self.coordinator = coordinator
-        self._remove_listener = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, "main")}, name=NAME, manufacturer="Dummy OS", model="Forecast Platform", sw_version=VERSION)
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        self._remove_listener = self.coordinator.async_add_listener(self._handle_update)
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._remove_listener is not None:
-            self._remove_listener()
-        await super().async_will_remove_from_hass()
-
-    @callback
-    def _handle_update(self) -> None:
-        self.async_write_ha_state()
-
-    def _result(self) -> dict[str, Any]:
-        return calculate_horizon_quality(self.coordinator.horizon_daily_stats, self.coordinator.profile)
-
-    @property
-    def native_value(self) -> str:
-        return str(self._result()["status"])
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return dict(self._result())
-
-
-def build_home_input_sensors(
-    coordinator: DummyOSHomeDataCoordinator,
-) -> list[SensorEntity]:
-    """Build the definitive canonical Source energy-flow sensor set plus observers."""
+def build_home_input_sensors(coordinator: DummyOSDataCoordinator) -> list[SensorEntity]:
+    """Keep the seven existing canonical Source sensors unchanged."""
     entities: list[SensorEntity] = [
         DummyOSSourceGridNetPowerSensor(coordinator),
         DummyOSSourceGridSplitPowerSensor(coordinator, export=False),
         DummyOSSourceGridSplitPowerSensor(coordinator, export=True),
     ]
     entities.extend(
-        DummyOSSourcePowerSensor(
-            coordinator,
-            config_key,
-            object_id,
-            name,
-            icon,
-        )
+        DummyOSSourcePowerSensor(coordinator, config_key, object_id, name, icon)
         for config_key, object_id, name, icon in POSITIVE_SOURCE_DEFINITIONS
     )
     entities.append(DummyOSSourceHomePowerSensor(coordinator))
-    entities.append(DummyOSEnergyFallbackHierarchySensor(coordinator))
-    entities.append(DummyOSEnergyMeaningfulConfidenceSensor(coordinator))
-    entities.append(DummyOSEnergyForecastQualityByHorizonSensor(coordinator))
     return entities

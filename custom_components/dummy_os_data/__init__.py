@@ -1,7 +1,5 @@
-"""Dummy OS Forecast integration."""
-
+"""Dummy OS Energy - retained Source, Weather, Solar and Degree Days."""
 from __future__ import annotations
-
 import asyncio
 import logging
 
@@ -10,19 +8,13 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, NAME, PLATFORMS
-from .coordinator import DummyOSHomeDataCoordinator
+from .coordinator import DummyOSDataCoordinator
 from .degree_days import DummyOSDegreeDaysCoordinator
-from .entity_migrations import (
-    OBSOLETE_HOME_INPUT_ENTITY_ALIASES,
-    is_known_generated_entity_id,
-)
-from .prices import DummyOSPricesCoordinator
+from .entity_migrations import OBSOLETE_HOME_INPUT_ENTITY_ALIASES, is_known_generated_entity_id
 from .solar import DummyOSSolarCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-
-
-type DummyOSDataConfigEntry = ConfigEntry[DummyOSHomeDataCoordinator]
+type DummyOSDataConfigEntry = ConfigEntry[DummyOSDataCoordinator]
 
 # Alpha.12 changes the public identity namespace while keeping the technical
 # integration domain stable. Existing registry rows are migrated in-place so
@@ -35,20 +27,6 @@ _IDENTITY_MIGRATIONS: tuple[tuple[str, str, str, str], ...] = (
     ("sensor", "do_data_battery_charge_power", "do_source_battery_charge_power", "sensor.do_source_battery_charge_power"),
     ("sensor", "do_data_battery_discharge_power", "do_source_battery_discharge_power", "sensor.do_source_battery_discharge_power"),
     ("sensor", "do_data_home_power", "do_source_home_power", "sensor.do_source_home_power"),
-    ("sensor", "do_home_actual_quarter", "do_energy_actual_quarter", "sensor.do_energy_actual_quarter"),
-    ("sensor", "do_home_history_status", "do_energy_history_status", "sensor.do_energy_history_status"),
-    ("sensor", "do_home_history_days", "do_energy_history_days", "sensor.do_energy_history_days"),
-    ("sensor", "do_home_forecast_model", "do_energy_forecast_model", "sensor.do_energy_forecast_model"),
-    ("sensor", "do_home_forecast", "do_energy_forecast", "sensor.do_energy_forecast"),
-    ("sensor", "do_home_forecast_timeline", "do_energy_forecast_timeline", "sensor.do_energy_forecast_timeline"),
-    ("sensor", "do_home_forecast_next_quarter", "do_energy_forecast_next_quarter", "sensor.do_energy_forecast_next_quarter"),
-    ("sensor", "do_home_forecast_coverage", "do_energy_forecast_coverage", "sensor.do_energy_forecast_coverage"),
-    ("sensor", "do_home_forecast_confidence", "do_energy_forecast_confidence", "sensor.do_energy_forecast_confidence"),
-    ("sensor", "do_home_forecast_model_health", "do_energy_forecast_model_health", "sensor.do_energy_forecast_model_health"),
-    ("sensor", "do_home_forecast_accuracy", "do_energy_forecast_accuracy", "sensor.do_energy_forecast_accuracy"),
-    ("sensor", "do_home_forecast_mae", "do_energy_forecast_mae", "sensor.do_energy_forecast_mae"),
-    ("sensor", "do_home_forecast_bias", "do_energy_forecast_bias", "sensor.do_energy_forecast_bias"),
-    ("sensor", "do_home_forecast_evaluation_samples", "do_energy_forecast_evaluation_samples", "sensor.do_energy_forecast_evaluation_samples"),
     ("sensor", "dummy_os_data_energy_peak_learning", "do_energy_peak_learning", "sensor.do_energy_peak_learning"),
     ("select", "do_home_profile", "do_energy_profile", "select.do_energy_profile"),
 )
@@ -134,16 +112,6 @@ _ENTITY_ID_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("sensor", "do_solar_residual_learning_candidate_next_quarter", "sensor.do_solar_residual_learning_candidate_next_quarter"),
     ("sensor", "do_solar_residual_learning_candidate_evaluation_last_completed_quarter", "sensor.do_solar_residual_learning_candidate_evaluation_last_completed_quarter"),
     ("sensor", "do_solar_residual_learning_validation", "sensor.do_solar_residual_learning_validation"),
-    ("sensor", "do_energy_forecast_quality_by_daypart", "sensor.do_energy_forecast_quality_by_daypart"),
-    ("sensor", "do_energy_forecast_quality_by_day_type", "sensor.do_energy_forecast_quality_by_day_type"),
-    ("sensor", "do_energy_forecast_quality_by_day_type_and_daypart", "sensor.do_energy_forecast_quality_by_day_type_and_daypart"),
-    ("sensor", "do_energy_forecast_quality_by_hour", "sensor.do_energy_forecast_quality_by_hour"),
-    ("sensor", "do_energy_peak_learning", "sensor.do_energy_peak_learning"),
-    ("sensor", "do_energy_time_windows", "sensor.do_energy_time_windows"),
-    ("sensor", "do_energy_recency_weighting", "sensor.do_energy_recency_weighting"),
-    ("sensor", "do_energy_fallback_hierarchy", "sensor.do_energy_fallback_hierarchy"),
-    ("sensor", "do_energy_meaningful_confidence", "sensor.do_energy_meaningful_confidence"),
-    ("sensor", "do_energy_forecast_quality_by_horizon", "sensor.do_energy_forecast_quality_by_horizon"),
     ("sensor", "do_degree_days_status", "sensor.do_degree_days_status"),
     ("sensor", "do_degree_days_history_days", "sensor.do_degree_days_history_days"),
     ("sensor", "do_degree_days_temperature_daily", "sensor.do_degree_days_temperature_daily"),
@@ -157,33 +125,48 @@ _ENTITY_ID_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-async def _async_noop() -> None:
-    """Temporarily replace Weather setup while local Home state initializes."""
 
+_RETIRED_UNIQUE_ID_PREFIXES = ("do_energy_", "do_home_", "do_prices_")
+_RETIRED_PRICE_STATES = (
+    "sensor.do_prices_status", "sensor.do_prices_market_current",
+    "sensor.do_prices_import_current", "sensor.do_prices_export_current",
+    "sensor.do_prices_timeline", "sensor.do_prices_tariff_profile",
+    "sensor.do_prices_gas_market", "sensor.do_prices_gas_all_in",
+)
 
-async def _async_setup_cloud_sources(
-    coordinator: DummyOSHomeDataCoordinator,
-    weather_setup,
-) -> None:
-    """Initialize cloud-backed sources outside Home Assistant's setup critical path."""
+def _async_remove_retired_entities(hass: HomeAssistant) -> None:
+    """Remove only obsolete integration-owned entities, never historical data."""
+    registry = er.async_get(hass)
+    for entity in list(registry.entities.values()):
+        if entity.platform != DOMAIN or entity.domain not in {"sensor", "select"}:
+            continue
+        if not str(entity.unique_id).startswith(_RETIRED_UNIQUE_ID_PREFIXES):
+            continue
+        registry.async_remove(entity.entity_id)
+        if hass.states.get(entity.entity_id) is not None:
+            hass.states.async_remove(entity.entity_id)
+    # Old Price states were published directly without registry entries.
+    for entity_id in _RETIRED_PRICE_STATES:
+        existing = registry.async_get(entity_id)
+        if existing is not None and existing.platform != DOMAIN:
+            continue
+        if hass.states.get(entity_id) is not None:
+            hass.states.async_remove(entity_id)
+
+async def _async_setup_cloud_sources(coordinator: DummyOSDataCoordinator) -> None:
+    """Start Weather/Solar concurrently; start Degree Days when complete."""
     results = await asyncio.gather(
-        weather_setup(),
-        coordinator.prices.async_setup(),
+        coordinator.weather.async_setup(),
         coordinator.solar.async_setup(),
         return_exceptions=True,
     )
-    for source_name, result in zip(("weather", "prices", "solar"), results, strict=True):
+    for name, result in zip(("weather", "solar"), results, strict=True):
         if isinstance(result, BaseException):
-            _LOGGER.warning("Dummy OS Data %s startup failed in background: %s", source_name, result)
-
+            _LOGGER.warning("Dummy OS Data %s startup failed: %s", name, result)
     try:
         await coordinator.degree_days.async_setup()
     except Exception as err:
-        _LOGGER.warning("Dummy OS Data degree-days startup failed in background: %s", err)
-
-    # Forecast/model sensors listen to the Home coordinator. One consolidated
-    # notification republishes their cached results after source initialization.
-    coordinator._notify()
+        _LOGGER.warning("Dummy OS Data Degree Days startup failed: %s", err)
 
 
 def _is_obsolete_home_input_state(state: State | None) -> bool:
@@ -196,53 +179,6 @@ def _is_obsolete_home_input_state(state: State | None) -> bool:
         and isinstance(attrs.get("source_entity"), str)
         and "source_available" in attrs
     )
-
-
-async def async_setup_entry(hass: HomeAssistant, entry: DummyOSDataConfigEntry) -> bool:
-    """Set up Dummy OS Forecast from a config entry."""
-    _async_remove_obsolete_home_input_entities(hass)
-    _async_migrate_alpha12_identities(hass)
-    _async_remove_degree_days_runtime_states(hass)
-    _async_migrate_generated_entity_ids(hass)
-
-    if entry.title in {"Dummy OS", "Dummy OS Data"} and entry.title != NAME:
-        hass.config_entries.async_update_entry(entry, title=NAME)
-
-    coordinator = DummyOSHomeDataCoordinator(hass, entry)
-
-    # Home history/state is local and should be available immediately. Prevent
-    # its normal Weather setup call from turning config-entry setup into a cloud wait.
-    weather_setup = coordinator.weather.async_setup
-    coordinator.weather.async_setup = _async_noop
-    try:
-        await coordinator.async_setup()
-    finally:
-        coordinator.weather.async_setup = weather_setup
-
-    coordinator.degree_days = DummyOSDegreeDaysCoordinator(hass, coordinator.weather)
-    coordinator.prices = DummyOSPricesCoordinator(hass, entry)
-    coordinator.solar = DummyOSSolarCoordinator(hass, entry)
-
-    entry.runtime_data = coordinator
-
-    # Register all platforms before any external source fetch. Entities expose
-    # initializing/not_loaded until the background source wave supplies data.
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    source_setup_task = entry.async_create_background_task(
-        hass,
-        _async_setup_cloud_sources(coordinator, weather_setup),
-        "Dummy OS Data cloud sources",
-        eager_start=False,
-    )
-    coordinator._source_setup_task = source_setup_task
-    entry.async_on_unload(source_setup_task.cancel)
-
-    _async_remove_degree_days_runtime_states(hass)
-    _async_migrate_generated_entity_ids(hass)
-    _async_remove_obsolete_home_input_entities(hass)
-    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-    return True
 
 
 def _async_remove_obsolete_home_input_entities(hass: HomeAssistant) -> None:
@@ -349,30 +285,53 @@ def _async_migrate_generated_entity_ids(hass: HomeAssistant) -> None:
         _LOGGER.info("Migrated entity ID %s to %s", current_entity_id, target_entity_id)
 
 
+
+async def async_setup_entry(hass: HomeAssistant, entry: DummyOSDataConfigEntry) -> bool:
+    """Only register retained sensors, without Home Forecast or Prices tasks."""
+    _async_remove_obsolete_home_input_entities(hass)
+    _async_migrate_alpha12_identities(hass)
+    _async_remove_degree_days_runtime_states(hass)
+    _async_migrate_generated_entity_ids(hass)
+    _async_remove_retired_entities(hass)
+
+    if entry.title in {"Dummy OS", "Dummy OS Data"} and entry.title != NAME:
+        hass.config_entries.async_update_entry(entry, title=NAME)
+
+    coordinator = DummyOSDataCoordinator(hass, entry)
+    coordinator.degree_days = DummyOSDegreeDaysCoordinator(hass, coordinator.weather)
+    coordinator.solar = DummyOSSolarCoordinator(hass, entry)
+    entry.runtime_data = coordinator
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    source_task = entry.async_create_background_task(
+        hass, _async_setup_cloud_sources(coordinator),
+        "Dummy OS Data retained cloud sources", eager_start=False,
+    )
+    coordinator._source_setup_task = source_task
+    entry.async_on_unload(source_task.cancel)
+
+    _async_remove_degree_days_runtime_states(hass)
+    _async_migrate_generated_entity_ids(hass)
+    _async_remove_obsolete_home_input_entities(hass)
+    _async_remove_retired_entities(hass)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    return True
+
 async def _async_update_listener(hass: HomeAssistant, entry: DummyOSDataConfigEntry) -> None:
-    """Reload the entry when options change."""
     await hass.config_entries.async_reload(entry.entry_id)
 
-
 async def async_unload_entry(hass: HomeAssistant, entry: DummyOSDataConfigEntry) -> bool:
-    """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        source_setup_task = getattr(entry.runtime_data, "_source_setup_task", None)
-        if source_setup_task is not None and not source_setup_task.done():
-            source_setup_task.cancel()
+        source_task = getattr(entry.runtime_data, "_source_setup_task", None)
+        if source_task is not None and not source_task.done():
+            source_task.cancel()
             try:
-                await source_setup_task
+                await source_task
             except asyncio.CancelledError:
                 pass
-        solar = getattr(entry.runtime_data, "solar", None)
-        if solar is not None:
-            await solar.async_shutdown()
-        prices = getattr(entry.runtime_data, "prices", None)
-        if prices is not None:
-            await prices.async_shutdown()
-        degree_days = getattr(entry.runtime_data, "degree_days", None)
-        if degree_days is not None:
-            await degree_days.async_shutdown()
-        await entry.runtime_data.async_shutdown()
+        await entry.runtime_data.solar.async_shutdown()
+        await entry.runtime_data.degree_days.async_shutdown()
+        await entry.runtime_data.weather.async_shutdown()
+        _async_remove_retired_entities(hass)
     return unload_ok
