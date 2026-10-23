@@ -11,6 +11,7 @@ on:
       - 'RELEASE_NOTES*.md'
       - '.github/workflows/validate-forecast-only.yml'
       - '.github/workflows/publish-alpha52.yml'
+      - '.github/workflows/publish-alpha53.yml'
 
 permissions:
   contents: read

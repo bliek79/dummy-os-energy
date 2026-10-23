@@ -5,7 +5,7 @@ import re
 
 ROOT = Path(__file__).parents[1]
 MOD = ROOT / "custom_components/dummy_os_data"
-VERSION = "0.2.0-alpha.52"
+VERSION = "0.2.0-alpha.53"
 
 def source(name):
     return (MOD / name).read_text(encoding="utf-8")
@@ -13,7 +13,7 @@ def source(name):
 def test_release_metadata():
     assert json.loads(source("manifest.json"))["version"] == VERSION
     assert re.search(r'^VERSION = "0\.2\.0-alpha\.52"$', source("const.py"), re.M)
-    assert f"**Tag:** `0.2.0-alpha.52`" in (ROOT / f"RELEASE_NOTES_{VERSION}.md").read_text()
+    assert f"**Tag:** `0.2.0-alpha.53`" in (ROOT / f"RELEASE_NOTES_{VERSION}.md").read_text()
 
 def test_translation_keys_match():
     strings = json.loads(source("strings.json"))
